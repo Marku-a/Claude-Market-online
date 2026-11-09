@@ -148,7 +148,9 @@
      "category": "שתייה חמה",
      "price": 21.9,
      "in_stock": true,
-     "product_id": "7290000500015"
+     "product_id": "7290000500015",
+     "unit_price": 10.95,
+     "unit_label": "ל-100 גרם"
     },
     {
      "product_id": "7290000500022",
@@ -156,6 +158,8 @@
      "brand": "עלית",
      "category": "שתייה חמה",
      "price": 13.5,
+     "unit_price": 13.5,
+     "unit_label": "ל-100 גרם",
      "in_stock": true
     }
    ]

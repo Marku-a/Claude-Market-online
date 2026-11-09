@@ -9,14 +9,17 @@ from collections import defaultdict
 from datetime import date, datetime
 from itertools import combinations
 
-_NIQQUD = re.compile("[֑-ׇ]")
+# Hebrew punctuation (maqaf, paseq, sof pasuq, nun hafukha) separates words
+_HEB_PUNCT = re.compile("[\u05BE\u05C0\u05C3\u05C6]")
+_NIQQUD = re.compile("[\u0591-\u05C7]")
 _NOT_WORD = re.compile(r"[^\w%\s]|_", re.UNICODE)
-_TRAIL_QTY = re.compile(r"^(.*?)\s*[xX×*]\s*(\d+)\s*$")
+_TRAIL_QTY = re.compile(r"^(.*?)\s*(?:(?<![A-Za-z])[xX]|[×*])\s*(\d+)\s*$")
 _LEAD_QTY = re.compile(r"^(\d+)\s+(.+)$")
 
 
 def normalize(text):
-    text = _NIQQUD.sub("", text or "")
+    text = _HEB_PUNCT.sub(" ", text or "")
+    text = _NIQQUD.sub("", text)
     text = _NOT_WORD.sub(" ", text).lower()
     return " ".join(text.split())
 
