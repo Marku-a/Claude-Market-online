@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "סל חכם — השוואת סל בין רשתות",
+  "short_name": "סל חכם",
+  "version": "0.1.0",
+  "description": "בונה את סל הקניות שלך בחצי חינם, רמי לוי ושופרסל, משווה מחירים מהאתרים עצמם ומשאיר עגלה מוכנה. לא משלם ולא רואה פרטי אשראי.",
+  "default_locale": "he",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://shop.hazi-hinam.co.il/*",
+    "https://www.rami-levy.co.il/*",
+    "https://www.shufersal.co.il/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "סל חכם" },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; connect-src 'none'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["sites/*.js", "engine/text.js"],
+      "matches": [
+        "https://shop.hazi-hinam.co.il/*",
+        "https://www.rami-levy.co.il/*",
+        "https://www.shufersal.co.il/*"
+      ]
+    }
+  ]
+}
