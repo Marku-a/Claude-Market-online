@@ -2,6 +2,7 @@
 """Shopping-plan engine for a Hebrew supermarket assistant (stdlib only)."""
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
@@ -50,12 +51,30 @@ def parse_list_line(line):
 
 def _load_json(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             return json.load(f)
     except OSError as e:
         raise ValueError("cannot read %s: %s" % (path, e))
     except ValueError as e:
         raise ValueError("invalid JSON in %s: %s" % (path, e))
+
+
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def _check_product(c, where):
+    if not isinstance(c, dict) or not isinstance(c.get("name"), str):
+        raise ValueError(where + ": missing 'name'")
+    if not _num(c.get("price")) or c["price"] < 0:
+        raise ValueError(where + ": 'price' must be a number >= 0")
+    p = c.get("promo")
+    if p is not None:
+        ok = (isinstance(p, dict) and isinstance(p.get("min_qty"), int)
+              and not isinstance(p["min_qty"], bool) and p["min_qty"] >= 1
+              and _num(p.get("total_price")) and p["total_price"] > 0)
+        if not ok:
+            del c["promo"]
 
 
 def load_history(path):
@@ -69,6 +88,14 @@ def load_history(path):
             date.fromisoformat(o["date"])
         except (TypeError, ValueError):
             raise ValueError("%s: bad order date %r" % (path, o.get("date")))
+        for n, it in enumerate(o["items"]):
+            where = "%s: order %s item %d" % (path, o.get("id", o["date"]), n)
+            if not isinstance(it, dict) or not isinstance(it.get("name"), str):
+                raise ValueError(where + ": missing 'name'")
+            if not _num(it.get("qty")) or it["qty"] <= 0:
+                raise ValueError(where + ": 'qty' must be a number > 0")
+            if not _num(it.get("price")) or it["price"] < 0:
+                raise ValueError(where + ": 'price' must be a number >= 0")
     return data
 
 
@@ -76,12 +103,21 @@ def load_candidates(path):
     data = _load_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("searches", []), list):
         raise ValueError("%s: expected object with 'searches' list" % path)
+    for s in data.get("searches", []):
+        if not isinstance(s, dict) or not isinstance(s.get("results", []), list):
+            raise ValueError("%s: each search needs a 'results' list" % path)
+        for n, c in enumerate(s.get("results", [])):
+            _check_product(c, "%s: line %r result %d" % (path, s.get("line"), n))
+    if not isinstance(data.get("watch", []), list):
+        raise ValueError("%s: 'watch' must be a list" % path)
+    for n, w in enumerate(data.get("watch", [])):
+        _check_product(w, "%s: watch entry %d" % (path, n))
     return data
 
 
 def load_list(path):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             raw = f.read().splitlines()
     except OSError as e:
         raise ValueError("cannot read %s: %s" % (path, e))
@@ -132,7 +168,7 @@ def build_profile(history, today):
         products[k] = {
             "name": st["name"], "brand": st["brand"], "category": st["category"],
             "order_count": len(st["qtys"]), "total_qty": sum(st["qtys"]),
-            "typical_qty": max(1, int(round(statistics.median(st["qtys"])))),
+            "typical_qty": max(1, int(statistics.median(st["qtys"]) + 0.5)),
             "last_date": dates[-1].isoformat(), "last_price": st["last_price"],
             "avg_interval_days": (sum(gaps) / len(gaps)) if gaps else None,
             "days_since_last": (today - dates[-1]).days,
@@ -167,13 +203,15 @@ def _r(x):
     return round(x + 0.0, 2)
 
 
-def _cmp_price(c):
-    return c.get("unit_price") if c.get("unit_price") is not None else c["price"]
+def _has_unit(c):
+    return _num(c.get("unit_price")) and c["unit_price"] > 0
 
 
 def _promo_worth(c):
     p = c.get("promo")
-    if not p or not p.get("min_qty") or p.get("total_price") is None:
+    if not p or c["price"] <= 0 or not p.get("min_qty") or p["min_qty"] < 1:
+        return False
+    if not _num(p.get("total_price")) or p["total_price"] <= 0:
         return False
     return p["total_price"] / p["min_qty"] <= c["price"] * 0.95
 
@@ -201,6 +239,9 @@ def plan(history, lines, candidates, today):
 
     items, missing, deals, swaps = [], [], [], []
     chosen_keys, chosen_info = set(), []
+    cart = {}
+    all_keys = {product_key(c.get("product_id"), c.get("name", ""))
+                for r in by_raw.values() for c in r}
     for ln in lines:
         raw = ln["raw"]
         results = by_raw.get(raw)
@@ -215,14 +256,18 @@ def plan(history, lines, candidates, today):
                           "qty": ln["qty"], "line_total": 0.0, "promo_applied": False,
                           "promo_saving": 0.0, "reasons": [reason], "alternatives": []})
             continue
-        cmp_vals = [_cmp_price(c) for c in stock]
+        use_unit = all(_has_unit(c) for c in stock)
+
+        def cmp_of(c):
+            return c["unit_price"] if use_unit else c["price"]
+        cmp_vals = [cmp_of(c) for c in stock]
         scored = []
         for c in stock:
             k = product_key(c.get("product_id"), c["name"])
             p = prods.get(k)
             cat = c.get("category") or (p or {}).get("category")
             top = _top_brand(profile, cat)
-            rank = sum(1 for v in cmp_vals if v < _cmp_price(c))
+            rank = sum(1 for v in cmp_vals if v < cmp_of(c))
             sc, why = 0.0, []
             if p:
                 sc += min(10 * p["order_count"], 60)
@@ -254,34 +299,42 @@ def plan(history, lines, candidates, today):
                     "extra_cost": _r(ch["promo"]["total_price"] - price * qty),
                     "saving_per_unit": _r(price - ch["promo"]["total_price"] / mq),
                     "description": ch["promo"].get("description", "")})
-        # swap suggestion
+        # swap suggestion (compares effective cost at the same qty, incl. promos)
         best = None
+        ch_total = price * qty - saving
         for _, alt, ak, _, _ in scored[1:]:
             near = similarity(ch["name"], alt["name"]) >= 0.4 or (
                 ch.get("category") and alt.get("category") and ch["category"] == alt["category"])
-            if not near:
+            if not near or price <= 0 or ch_total <= 0:
                 continue
-            if ch.get("unit_price") is not None and alt.get("unit_price") is not None:
-                a_cmp, c_cmp = alt["unit_price"], ch["unit_price"]
+            if _has_unit(ch) != _has_unit(alt):
+                continue  # pack sizes not comparable when only one side has a unit price
+            alt_total = alt["price"] * qty
+            if _promo_worth(alt):
+                alt_total -= _promo_saving(alt, qty)
+            if _has_unit(ch) and _has_unit(alt):
+                ch_eff = ch["unit_price"] * ch_total / (price * qty)
+                alt_eff = alt["unit_price"] * (alt_total / (alt["price"] * qty) if alt["price"] > 0 else 1)
             else:
-                a_cmp, c_cmp = alt["price"], price
-            if a_cmp > 0.9 * c_cmp:
+                ch_eff, alt_eff = ch_total, alt_total
+            if ch_eff <= 0 or alt_eff > 0.9 * ch_eff:
                 continue
-            per = price - alt["price"]
-            if per <= 0:
-                per = price * (1 - a_cmp / c_cmp)
-            if best is None or per > best[0]:
-                best = (per, alt)
+            tot = ch_total - alt_total
+            if tot <= 0:
+                tot = ch_total * (1 - alt_eff / ch_eff)
+            if best is None or tot > best[0]:
+                best = (tot, alt)
         if best:
-            per, alt = best
+            tot, alt = best
             swaps.append({
                 "line": raw,
                 "from": {"id": ch.get("product_id"), "name": ch["name"], "price": price},
                 "to": {"id": alt.get("product_id"), "name": alt["name"], "price": alt["price"]},
-                "saving_per_unit": _r(per), "saving_total": _r(per * qty),
-                "reason": "מוצר דומה זול יותר ב-%d%% לפחות" % 10})
+                "saving_per_unit": _r(tot / qty), "saving_total": _r(tot),
+                "reason": "מוצר דומה זול יותר ב-10% לפחות"})
         chosen_keys.add(key)
         chosen_info.append((key, ch))
+        cart.setdefault(key, []).append(len(items))
         items.append({
             "line": raw, "query": ln["query"], "status": "ok",
             "product_id": ch.get("product_id"), "name": ch["name"], "brand": ch.get("brand"),
@@ -297,7 +350,7 @@ def plan(history, lines, candidates, today):
         (product_key(w.get("product_id"), w.get("name", "")), w) for w in watch]
     for k, c in entries:
         p = prods.get(k)
-        if k in seen or not p or not p.get("last_price"):
+        if k in seen or not p or not _num(p.get("last_price")) or p["last_price"] <= 0:
             continue
         seen.add(k)
         pct = round((c["price"] - p["last_price"]) / p["last_price"] * 100, 2)
@@ -313,7 +366,7 @@ def plan(history, lines, candidates, today):
     forgot = []
     for k, p in prods.items():
         iv = p["avg_interval_days"]
-        if p["order_count"] < 3 or iv is None or k in chosen_keys or k in oos_watch:
+        if p["order_count"] < 3 or iv is None or k in chosen_keys or k in oos_watch or k in all_keys:
             continue
         if p["days_since_last"] < 0.9 * iv:
             continue
@@ -334,7 +387,7 @@ def plan(history, lines, candidates, today):
         if r["confidence"] < 0.6 or r["a"] not in chosen_keys:
             continue
         b = r["b"]
-        if b in chosen_keys or b in forgot_keys or b in seen_b or b in oos_watch:
+        if b in chosen_keys or b in forgot_keys or b in seen_b or b in oos_watch or b in all_keys:
             continue
         seen_b.add(b)
         goes.append({"with": prods[r["a"]]["name"],
@@ -344,12 +397,20 @@ def plan(history, lines, candidates, today):
             break
 
     ok = [i for i in items if i["status"] == "ok"]
+    cart_actions, merged = [], []
+    for k, idxs in cart.items():
+        first = items[idxs[0]]
+        cart_actions.append({"product_id": first["product_id"], "name": first["name"],
+                             "qty": sum(items[j]["qty"] for j in idxs)})
+        if len(idxs) > 1:
+            merged.append({"product_id": first["product_id"], "name": first["name"],
+                           "lines": [items[j]["line"] for j in idxs]})
     return {
         "generated": today.isoformat(), "items": items, "missing": missing,
         "deal_suggestions": deals, "swap_suggestions": swaps, "price_changes": changes,
         "maybe_forgot": forgot, "goes_with": goes,
         "estimated_total": _r(sum(i["line_total"] for i in ok)),
-        "cart_actions": [{"product_id": i["product_id"], "name": i["name"], "qty": i["qty"]} for i in ok],
+        "cart_actions": cart_actions, "merged": merged,
     }
 
 
@@ -369,6 +430,8 @@ def render_report(p):
             why += " (חיסכון ₪%s)" % _m(i["promo_saving"])
         out.append("| %s | %d | ₪%s | ₪%s | %s |" % (i["name"], i["qty"], _m(i["price"]), _m(i["line_total"]), why))
     out.append("")
+    for m in p.get("merged", []):
+        out += ["- %s: מוצר זה הופיע בכמה שורות ברשימה — אוחד (%s)" % (m["name"], ", ".join(m["lines"])), ""]
     if p["missing"]:
         out += ["## ⚠️ חסר / לא נמצא", ""]
         out += ["- %s: %s" % (m["line"], m["reason"]) for m in p["missing"]] + [""]
@@ -428,6 +491,11 @@ def main(argv=None):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     try:
+        inputs = [args.history] + ([args.list, args.candidates] if args.cmd == "plan" else [])
+        real_in = {os.path.realpath(x) for x in inputs}
+        for o in (getattr(args, "out", None), getattr(args, "report", None)):
+            if o and os.path.realpath(o) in real_in:
+                raise ValueError("output path %s would overwrite an input file" % o)
         today = _parse_today(args.today)
         history = load_history(args.history)
         if args.cmd == "profile":
@@ -446,7 +514,7 @@ def main(argv=None):
                 f.write(report)
         print(report)
         return 0
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, KeyError, TypeError, ZeroDivisionError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 2
 

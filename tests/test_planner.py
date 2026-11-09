@@ -283,5 +283,128 @@ class TestNormalizeEdgeCases(unittest.TestCase):
         self.assertEqual(planner.parse_list_line("במבה×3")["qty"], 3)
 
 
+class ReviewFixTests(unittest.TestCase):
+    def _fav(self, qty=2, price=10.0):
+        return hist(*[order(str(i), "2026-10-%02d" % (i + 1), ("1", "חלב תנובה 3%", "תנובה", "חלב", qty, price))
+                      for i in range(4)])
+
+    def test_swap_accounts_for_applied_promo(self):
+        promo = {"description": "2 ב-12", "min_qty": 2, "total_price": 12.0}
+        h = hist(*[order(str(i), "2026-10-%02d" % (i + 1), (*MILK, 2, 7.0)) for i in range(4)])
+        res = run_plan(h, ["2 חלב"], [{"line": "2 חלב", "results": [
+            cand("1", MILK[1], 7.4, brand="תנובה", category="חלב", promo=promo),
+            cand("2", "חלב טרה 3% 1 ליטר", 6.2, category="חלב")]}])
+        self.assertEqual(res["items"][0]["product_id"], "1")
+        self.assertEqual(res["swap_suggestions"], [])
+
+    def test_swap_still_worth_after_promo(self):
+        promo = {"description": "2 ב-14", "min_qty": 2, "total_price": 14.0}
+        res = run_plan(self._fav(), ["2 חלב"], [{"line": "2 חלב", "results": [
+            cand("1", "חלב תנובה 3%", 10.0, brand="תנובה"),
+            cand("2", "חלב טרה 3%", 9.5, promo=promo)]}])
+        s = res["swap_suggestions"][0]
+        self.assertEqual((s["saving_total"], s["saving_per_unit"]), (6.0, 3.0))
+
+    def test_zero_price_no_crash(self):
+        res = run_plan(hist(), ["שקית"], [{"line": "שקית", "results": [
+            cand("1", "שקית", 0.0), cand("2", "שקית גדולה", 0.0)]}])
+        self.assertEqual(res["swap_suggestions"], [])
+        self.assertEqual(res["estimated_total"], 0.0)
+
+    def test_mixed_unit_price_uses_price(self):
+        h = hist(*[order(str(i), "2026-10-%02d" % (i + 1), ("1", "קפה נמס עלית 200 גרם", "עלית", "קפה", 1, 21.9))
+                   for i in range(4)])
+        res = run_plan(h, ["קפה"], [{"line": "קפה", "results": [
+            cand("1", "קפה נמס עלית 200 גרם", 21.9, unit_price=10.95, brand="עלית", category="קפה"),
+            cand("2", "קפה נמס עלית 100 גרם", 13.5, brand="עלית", category="קפה")]}])
+        self.assertEqual(res["items"][0]["product_id"], "1")
+        self.assertEqual(res["swap_suggestions"], [])
+
+    def test_typical_qty_half_up(self):
+        h = hist(order("a", "2026-10-01", (*MILK, 2, 7)), order("b", "2026-10-08", (*MILK, 3, 7)))
+        self.assertEqual(planner.build_profile(h, TODAY)["products"]["1"]["typical_qty"], 3)
+
+    def test_forgot_excludes_any_result_key(self):
+        h = hist(
+            order("a", "2026-08-01", (*MILK, 1, 7), (*BREAD, 1, 7)),
+            order("b", "2026-08-15", (*MILK, 1, 7), (*BREAD, 1, 7)),
+            order("c", "2026-08-29", (*MILK, 1, 7), (*BREAD, 1, 7)))
+        res = run_plan(h, ["לחם", "אורז"], [
+            {"line": "לחם", "results": [cand("2", BREAD[1], 7)]},
+            {"line": "אורז", "results": [cand("1", MILK[1], 7, in_stock=False)]}])
+        self.assertEqual(res["maybe_forgot"], [])
+
+    def test_merge_same_product(self):
+        res = run_plan(hist(), ["חלב", "2 חלב"], [
+            {"line": "חלב", "results": [cand("1", "חלב", 7)]},
+            {"line": "2 חלב", "results": [cand("1", "חלב", 7)]}])
+        self.assertEqual(res["cart_actions"], [{"product_id": "1", "name": "חלב", "qty": 3}])
+        self.assertEqual(len(res["merged"]), 1)
+        self.assertIn("מוצר זה הופיע בכמה שורות ברשימה — אוחד", planner.render_report(res))
+
+    def test_loader_validation(self):
+        with tempfile.TemporaryDirectory() as td:
+            def w(name, text):
+                path = os.path.join(td, name)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                return path
+            with self.assertRaises(ValueError):
+                planner.load_candidates(w("c1.json", '{"searches":[{"line":"x","results":[{"name":"a"}]}]}'))
+            with self.assertRaises(ValueError):
+                planner.load_candidates(w("c2.json", '{"searches":[],"watch":[{"name":"a","price":true}]}'))
+            with self.assertRaises(ValueError):
+                planner.load_history(w("h1.json", '{"orders":[{"id":"1","date":"2026-10-01","items":'
+                                                  '[{"name":"a","qty":0,"price":1}]}]}'))
+            c = planner.load_candidates(w("c3.json", '{"searches":[{"line":"x","results":[{"name":"a",'
+                                                     '"price":5,"promo":{"min_qty":0,"total_price":3}}]}]}'))
+            self.assertNotIn("promo", c["searches"][0]["results"][0])
+
+    def test_bom(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "l.txt")
+            with open(path, "w", encoding="utf-8-sig") as f:
+                f.write("# הערה\n2 חלב\n")
+            lines = planner.load_list(path)
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["qty"], 2)
+            with open(path, "w", encoding="utf-8-sig") as f:
+                f.write("2 חלב\n")
+            self.assertEqual(planner.load_list(path)[0]["qty"], 2)
+            hp = os.path.join(td, "h.json")
+            with open(hp, "w", encoding="utf-8-sig") as f:
+                f.write('{"orders":[]}')
+            self.assertEqual(planner.load_history(hp), {"orders": []})
+
+
+class CliGuardTests(unittest.TestCase):
+    def run_cli(self, *args):
+        return subprocess.run([sys.executable, os.path.join(SKILL, "scripts", "planner.py"), *args],
+                              capture_output=True, text=True, encoding="utf-8")
+
+    def test_candidate_without_price_exit_2(self):
+        ex = os.path.join(SKILL, "examples")
+        with tempfile.TemporaryDirectory() as td:
+            cp = os.path.join(td, "c.json")
+            with open(cp, "w", encoding="utf-8") as f:
+                f.write('{"searches":[{"line":"חלב","results":[{"name":"חלב"}]}]}')
+            r = self.run_cli("plan", "--history", os.path.join(ex, "history.json"),
+                             "--list", os.path.join(ex, "list.txt"), "--candidates", cp)
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("price", r.stderr)
+
+    def test_refuse_overwriting_input(self):
+        ex = os.path.join(SKILL, "examples")
+        with tempfile.TemporaryDirectory() as td:
+            lst = os.path.join(td, "l.txt")
+            with open(lst, "w", encoding="utf-8") as f:
+                f.write("חלב\n")
+            r = self.run_cli("plan", "--history", os.path.join(ex, "history.json"), "--list", lst,
+                             "--candidates", os.path.join(ex, "candidates.json"), "--report", lst)
+            self.assertEqual(r.returncode, 2)
+            with open(lst, encoding="utf-8") as f:
+                self.assertEqual(f.read(), "חלב\n")
+
+
 if __name__ == "__main__":
     unittest.main()
