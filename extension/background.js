@@ -9,7 +9,7 @@ const CALL_TIMEOUT_MS = 60000;
 const ADAPTER_METHODS = new Set([
   'checkLogin', 'getDeliveryContext', 'getOrders', 'search', 'getCart', 'setItem', 'emptyCart', 'diagnose',
 ]);
-const registry = { chains: CHAINS };
+const registry = CHAINS;
 
 chrome.action.onClicked.addListener(() => openApp());
 

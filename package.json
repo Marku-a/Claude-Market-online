@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/engine/*.test.mjs tests/adapters/*.test.mjs",
+    "test:e2e": "node --test tests/e2e/*.spec.mjs"
+  }
+}
