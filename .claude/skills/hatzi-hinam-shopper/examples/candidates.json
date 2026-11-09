@@ -1,0 +1,229 @@
+{
+ "searches": [
+  {
+   "line": "2 חלב 3%",
+   "results": [
+    {
+     "name": "חלב תנובה 3% 1 ליטר",
+     "brand": "תנובה",
+     "category": "מוצרי חלב",
+     "price": 7.4,
+     "in_stock": true,
+     "product_id": "7290000042435",
+     "unit_price": 7.4,
+     "unit_label": "לליטר",
+     "promo": {
+      "description": "2 ב-12",
+      "min_qty": 2,
+      "total_price": 12.0
+     }
+    },
+    {
+     "product_id": "7290000042442",
+     "name": "חלב טרה 3% 1 ליטר",
+     "brand": "טרה",
+     "category": "מוצרי חלב",
+     "price": 6.2,
+     "unit_price": 6.2,
+     "unit_label": "לליטר",
+     "in_stock": true
+    },
+    {
+     "product_id": "7290000042459",
+     "name": "חלב יוטבתה 3% 1 ליטר",
+     "brand": "יוטבתה",
+     "category": "מוצרי חלב",
+     "price": 7.2,
+     "unit_price": 7.2,
+     "unit_label": "לליטר",
+     "in_stock": true
+    }
+   ]
+  },
+  {
+   "line": "לחם פרוס",
+   "results": [
+    {
+     "name": "לחם אחיד פרוס",
+     "brand": "אנגל",
+     "category": "מאפים",
+     "price": 7.5,
+     "in_stock": true,
+     "product_id": "7290000200012",
+     "promo": {
+      "description": "2 ב-14",
+      "min_qty": 2,
+      "total_price": 14.0
+     }
+    },
+    {
+     "product_id": "7290000200029",
+     "name": "לחם מלא פרוס אנגל",
+     "brand": "אנגל",
+     "category": "מאפים",
+     "price": 8.9,
+     "in_stock": true
+    }
+   ]
+  },
+  {
+   "line": "ביצים L",
+   "results": [
+    {
+     "name": "ביצים L תבנית 12 יחידות",
+     "brand": "תנובה",
+     "category": "ביצים",
+     "price": 13.2,
+     "in_stock": true,
+     "product_id": "7290000100011"
+    },
+    {
+     "product_id": "7290000100028",
+     "name": "ביצים M תבנית 12 יחידות",
+     "brand": "מחסני השוק",
+     "category": "ביצים",
+     "price": 12.4,
+     "in_stock": true
+    }
+   ]
+  },
+  {
+   "line": "קוטג' 250",
+   "results": [
+    {
+     "name": "קוטג' 5% 250 גרם",
+     "brand": "תנובה",
+     "category": "מוצרי חלב",
+     "price": 5.9,
+     "in_stock": true,
+     "product_id": "7290000300013"
+    }
+   ]
+  },
+  {
+   "line": "עגבניות שרי",
+   "results": [
+    {
+     "name": "עגבניות שרי",
+     "brand": "",
+     "category": "ירקות",
+     "price": 8.9,
+     "in_stock": true,
+     "unit_price": 8.9,
+     "unit_label": "לק\"ג"
+    }
+   ]
+  },
+  {
+   "line": "אורז בסמטי",
+   "results": [
+    {
+     "name": "אורז בסמטי סוגת 1 ק\"ג",
+     "brand": "סוגת",
+     "category": "יבשים",
+     "price": 12.5,
+     "in_stock": false,
+     "product_id": "7290000400014"
+    },
+    {
+     "product_id": "7290000400045",
+     "name": "אורז בסמטי אסם 1 ק\"ג",
+     "brand": "אסם",
+     "category": "יבשים",
+     "price": 13.9,
+     "in_stock": false
+    }
+   ]
+  },
+  {
+   "line": "שוקולד פררו רושה",
+   "results": []
+  },
+  {
+   "line": "קפה נמס x2",
+   "results": [
+    {
+     "name": "קפה נמס עלית 200 גרם",
+     "brand": "עלית",
+     "category": "שתייה חמה",
+     "price": 21.9,
+     "in_stock": true,
+     "product_id": "7290000500015"
+    },
+    {
+     "product_id": "7290000500022",
+     "name": "קפה נמס עלית 100 גרם",
+     "brand": "עלית",
+     "category": "שתייה חמה",
+     "price": 13.5,
+     "in_stock": true
+    }
+   ]
+  }
+ ],
+ "watch": [
+  {
+   "name": "פסטה פנה אסם 500 גרם",
+   "brand": "אסם",
+   "category": "יבשים",
+   "price": 7.2,
+   "in_stock": true,
+   "product_id": "7290000400021"
+  },
+  {
+   "name": "שמן קנולה 1 ליטר",
+   "brand": "יד מרדכי",
+   "category": "יבשים",
+   "price": 11.9,
+   "in_stock": true,
+   "product_id": "7290000400038"
+  },
+  {
+   "name": "חזה עוף טרי לק\"ג",
+   "brand": "עוף טוב",
+   "category": "בשר ועוף",
+   "price": 29.9,
+   "in_stock": true,
+   "product_id": "7290000800018"
+  },
+  {
+   "name": "נייר טואלט 24 גלילים",
+   "brand": "סנו",
+   "category": "ניקיון",
+   "price": 34.9,
+   "in_stock": true,
+   "product_id": "7290000600016"
+  },
+  {
+   "name": "אבקת כביסה אריאל 3 ק\"ג",
+   "brand": "אריאל",
+   "category": "ניקיון",
+   "price": 42.9,
+   "in_stock": true,
+   "product_id": "7290001000010"
+  },
+  {
+   "name": "יוגורט דנונה פרו 200 גרם",
+   "brand": "דנונה",
+   "category": "מוצרי חלב",
+   "price": 3.9,
+   "in_stock": true,
+   "product_id": "7290000300020"
+  },
+  {
+   "name": "מלפפונים",
+   "brand": "",
+   "category": "ירקות",
+   "price": 6.9,
+   "in_stock": true
+  },
+  {
+   "name": "מים מינרליים נביעות 6 ליטר",
+   "brand": "נביעות",
+   "category": "שתייה",
+   "price": 13.9,
+   "in_stock": false,
+   "product_id": "7290000900019"
+  }
+ ]
+}
