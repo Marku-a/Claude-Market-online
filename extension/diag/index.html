@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>אבחון — סל חכם</title>
+  <link rel="stylesheet" href="diag.css">
+</head>
+<body>
+  <main>
+    <h1>אבחון</h1>
+    <p>הבדיקה מריצה כמה פעולות קריאה בכל אתר ומראה אם הן עובדות. הדוח מכיל רק מבנה (שמות שדות וסוגים), בלי מחירים, שמות, כתובות או אסימונים. אפשר לשלוח אותו למפתח בבטחה.</p>
+    <p><button type="button" id="btn-diag" data-testid="btn-diag">הרץ אבחון</button></p>
+    <div id="live" aria-live="polite" role="status"></div>
+    <div id="rows"></div>
+    <h2>הדוח</h2>
+    <pre id="report" data-testid="diag-report" dir="ltr" tabindex="0"></pre>
+    <p><button type="button" id="btn-copy">העתק דוח</button> <a href="../app/index.html">חזרה</a></p>
+  </main>
+  <script type="module" src="diag.js"></script>
+</body>
+</html>

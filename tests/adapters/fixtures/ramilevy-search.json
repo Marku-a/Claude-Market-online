@@ -1,0 +1,6 @@
+{"q":"חלב","status":200,"total":3,"data":[
+{"id":425127,"barcode":7290119672066,"name":"תערובת חליטת צמחים בטעם קרמל מלוח רמי לוי","price":{"price":8.9},"prop":{"unit":0,"sw_shakil":0,"by_kilo":0},"multiplication":1,"department":{"name":"משקאות ואלכוהול"},"gs":{"BrandName":"רמי לוי"},"available_in":[82,331],"sale":[]},
+{"id":100001,"barcode":7290000000012,"name":"חלב טרי 3% בקבוק 1 ליטר","price":{"price":6.9},"prop":{"by_kilo":0,"sw_shakil":0},"department":{"name":"מוצרי חלב"},"gs":{"BrandName":"תנובה"},"available_in":[331],"sale":[{"title":"2 ב-12 ש\"ח","cmt":2,"scm":12,"is_club":1}]},
+{"id":100002,"barcode":2000000000017,"name":"עגבניות שרי","price":{"price":14.9},"prop":{"by_kilo":1,"sw_shakil":1},"department":{"name":"ירקות"},"available_in":[82],"sale":[{"name":"מבצע ללא כמות","cmt":0,"scm":0}]},
+{"id":100009,"name":"פריט ללא מחיר"}
+]}

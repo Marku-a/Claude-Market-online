@@ -167,11 +167,15 @@ export function recommend(summary) {
     }
     return { chain: c, s, final: s.final, adjustedFinal: r2(s.final + fill) };
   });
-  rows.sort((a, b) => a.adjustedFinal - b.adjustedFinal || a.final - b.final);
+  // A cart you cannot actually order must not win: empty carts and carts below the site's minimum order
+  // are ranked after every orderable cart.
+  for (const r of rows) r.orderable = r.s.itemsTotal > 0 && !r.s.belowMinimum;
+  rows.sort((a, b) => (b.orderable - a.orderable) || a.adjustedFinal - b.adjustedFinal || a.final - b.final);
   const ranking = rows.map((r, i) => {
     const s = r.s;
     const reasons = [];
-    if (i === 0) reasons.push(rows.length > 1 ? 'הסל הזול ביותר כולל משלוח' : 'הרשת היחידה שהעגלה שלה הושלמה');
+    if (i === 0 && r.orderable) reasons.push(rows.length > 1 ? 'הסל הזול ביותר כולל משלוח' : 'הרשת היחידה שהעגלה שלה הושלמה');
+    if (s.itemsTotal <= 0) reasons.push('העגלה ריקה — אף מוצר לא נמצא');
     if (s.missingCount === 1) reasons.push('חסר מוצר אחד — הושלם במחיר מהרשת הזולה לצורך ההשוואה');
     else if (s.missingCount > 1) reasons.push(`חסרים ${s.missingCount} מוצרים — הושלמו במחיר מהרשת הזולה לצורך ההשוואה`);
     if (s.differentCount > 0) reasons.push(`${s.differentCount} מוצרים שונים ממה שרגילים לקנות`);
@@ -179,7 +183,8 @@ export function recommend(summary) {
     if (s.deliveryFeeUnknown) reasons.push('דמי משלוח לא ידועים — לא נכללו בסכום');
     if (s.itemsSource === 'estimate') reasons.push('הסכום הוא הערכה — העגלה לא אומתה באתר');
     if (s.discountTotal > 0) reasons.push('כולל הנחות אישיות');
-    return { chain: r.chain, final: r.final, adjustedFinal: r.adjustedFinal, reasons };
+    return { chain: r.chain, final: r.final, adjustedFinal: r.adjustedFinal, orderable: r.orderable, reasons };
   });
-  return { best: ranking.length ? ranking[0].chain : null, ranking, perLineCheapest: summary.perLineCheapest || [] };
+  const best = ranking.length && ranking[0].orderable ? ranking[0].chain : null;
+  return { best, ranking, perLineCheapest: summary.perLineCheapest || [] };
 }

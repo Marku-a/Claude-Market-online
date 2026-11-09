@@ -1,0 +1,6 @@
+{"results":[
+{"code":"P_522319","name":"חלב טרי מהגולן 3%","brandName":"גולן","stock":{"stockLevelStatus":{"code":"inStock"}},"price":{"currencyIso":"ILS","value":7.35,"formattedValue":"7.35 ₪"},"sellingMethod":{"code":"BY_UNIT"}},
+{"code":"P_7290000000999","name":"חלב תנובה 3% 1 ליטר","brandName":"תנובה","stock":{"stockLevelStatus":{"code":"inStock"}},"price":{"value":6.5},"sellingMethod":{"code":"BY_UNIT"},"effectivePrice":5.9,"effectiveMinQuantity":2,"promotionCodes":["x"]},
+{"code":"P_100200","name":"בננות","price":{"value":9.9},"sellingMethod":{"code":"BY_WEIGHT"},"pricePerUnit":{"value":9.9},"unitForComparison":"ק\"ג"},
+{"code":"P_100300","name":"חלב שקדים","price":{"value":12.5},"stock":{"stockLevelStatus":{"code":"outOfStock"}},"sellingMethod":{"code":"BY_UNIT"}}
+]}

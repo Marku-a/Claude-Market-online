@@ -1,6 +1,8 @@
 // Rami Levy adapter (runs inside a www.rami-levy.co.il tab). Endpoints: docs/SITES.md.
 // Auth token comes from the site's own localStorage and is used only as a request header.
-import { AdapterError, createHttp, need, num, checkId, assertPageSafe, runDiagnose } from './http.js';
+import {
+  AdapterError, createHttp, need, num, checkId, assertPageSafe, runDiagnose, lazyEnv,
+} from './http.js';
 
 const ORIGIN = 'https://www.rami-levy.co.il';
 const API = 'https://www-api.rami-levy.co.il';
@@ -29,7 +31,7 @@ export function parseSearch(json, ctx = {}) {
   const out = [];
   for (const it of data) {
     if (!it || typeof it !== 'object' || it.id == null) continue;
-    const price = it.price && num(it.price.price);
+    const price = it.price ? num(it.price.price) : null;
     if (price === null || !it.name) continue;
     const prop = it.prop || {};
     const sale = (Array.isArray(it.sale) ? it.sale : []).find((s) => s && num(s.cmt) >= 1 && num(s.scm) > 0);
@@ -237,14 +239,5 @@ export function createAdapter(env) {
   };
   return adapter;
 }
-
-// Lazy globals: nothing is touched at import time (Node has no document/localStorage).
-export const lazyEnv = () => ({
-  fetch: (...a) => globalThis.fetch(...a),
-  get localStorage() { return globalThis.localStorage; },
-  get document() { return globalThis.document; },
-  get DOMParser() { return globalThis.DOMParser; },
-  now: () => new Date(),
-});
 
 export default createAdapter(lazyEnv());

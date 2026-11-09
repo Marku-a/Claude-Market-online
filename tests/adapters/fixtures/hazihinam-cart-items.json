@@ -1,0 +1,4 @@
+{"IsOK":true,"ErrorResponse":null,"Results":{"CartItems":{"Items":[
+{"Id":7357,"Name":"חלב תנובה 3% 1 ליטר","Price_NET":6.2,"Calculated_Price_NET":12.4,"Cart":{"Quantity":2}},
+{"Id":7358,"Name":"עגבניות שרי","Price_NET":12.9,"Cart":{"Quantity":0.5}}
+]}}}

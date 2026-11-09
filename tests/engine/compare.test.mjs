@@ -221,3 +221,27 @@ describe('recommend', () => {
     assert.deepEqual(r.perLineCheapest, []);
   });
 });
+
+import { test as _t2 } from 'node:test';
+import _a2 from 'node:assert/strict';
+import { recommend as _rec } from '../../extension/engine/compare.js';
+const _chain = (o) => ({ status: 'ok', final: 0, itemsTotal: 0, missingCount: 0, differentCount: 0, belowMinimum: false,
+  deliveryFeeUnknown: false, itemsSource: 'site', discountTotal: 0, ...o });
+_t2('recommend: an empty cart or one below the minimum order never wins', () => {
+  const line = (a, b, c) => ({ line: 'x', chains: { a, b, c } });
+  const got = { match: 'identical', lineTotal: 50 };
+  const miss = { match: 'missing', lineTotal: 0 };
+  const summary = {
+    chains: {
+      a: _chain({ final: 80, itemsTotal: 50 }),
+      b: _chain({ final: 20, itemsTotal: 0, missingCount: 1 }),
+      c: _chain({ final: 60, itemsTotal: 50, belowMinimum: true }),
+    },
+    lines: [line(got, miss, got)], perLineCheapest: [],
+  };
+  const r = _rec(summary);
+  _a2.equal(r.best, 'a');
+  _a2.equal(r.ranking[0].chain, 'a');
+  summary.chains.a.belowMinimum = true;
+  _a2.equal(_rec(summary).best, null);
+});

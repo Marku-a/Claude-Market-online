@@ -1,0 +1,5 @@
+{"sales":[],"items":[
+{"id":164854,"name":"מחיר משלוח","price":35.9,"quantity":1,"FormatedTotalPrice":29.9,"is_delivery":true},
+{"id":425127,"name":"תערובת חליטת צמחים בטעם קרמל מלוח רמי לוי","price":8.9,"quantity":1,"FormatedTotalPrice":8.9,"is_delivery":false},
+{"id":100001,"name":"חלב טרי 3% בקבוק 1 ליטר","price":6.9,"quantity":2,"FormatedTotalPrice":12,"is_delivery":false}
+],"log_id":null,"price":20.9,"priceClub":20.9,"discount":0,"quantity":3,"status":200}

@@ -1,0 +1,5 @@
+{"IsOK":true,"ErrorResponse":null,"Results":{"Items":[
+{"Id":7357,"BarKod":7290000000012,"Name":"חלב תנובה 3% 1 ליטר","ManufacturerName":"תנובה","IsShakil":false,"Price_NET":6.2,"Price_Regular":6.9,"PricePerUnit":6.2,"PricePerUnitDesc":"ליטר","IsInStock":true,"Mivza":{"MivzaDesc":"מבצע","MivzaText":"מבצע מיוחד","MivzaQuantityCount":1,"IsTagmul":true}},
+{"Id":7358,"BarKod":2000000000024,"Name":"עגבניות שרי","IsShakil":true,"Price_NET":12.9,"Price_Regular":12.9,"IsInStock":true,"Mivza":{"MivzaText":"2 ב-20"}},
+{"Id":7359,"Name":"חלב סויה","Price_NET":9.9,"IsInStock":false,"Mivza":null}
+]}}

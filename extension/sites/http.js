@@ -168,3 +168,12 @@ export async function runDiagnose(http, steps) {
   }
   return out;
 }
+
+// Lazy globals: nothing is touched at import time (Node has no document/localStorage).
+export const lazyEnv = () => ({
+  fetch: (...a) => globalThis.fetch(...a),
+  get localStorage() { return globalThis.localStorage; },
+  get document() { return globalThis.document; },
+  get DOMParser() { return globalThis.DOMParser; },
+  now: () => new Date(),
+});
