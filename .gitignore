@@ -1,0 +1,8 @@
+# personal shopping data must never be committed
+.hatzi-hinam-shopper/
+history.json
+!.claude/skills/hatzi-hinam-shopper/examples/history.json
+plan.json
+report.md
+__pycache__/
+*.pyc
