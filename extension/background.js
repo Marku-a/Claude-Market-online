@@ -25,32 +25,40 @@ function fail(code, message) {
   return { ok: false, code, message };
 }
 
-async function workerTabs() {
-  const { workerTabs = {} } = await chrome.storage.session.get('workerTabs');
-  return workerTabs;
+// One storage key per chain, so parallel chains never overwrite each other's tab id.
+const tabKey = (chainId) => 'tab_' + chainId;
+
+async function workerTab(chainId) {
+  const got = await chrome.storage.session.get(tabKey(chainId));
+  return got[tabKey(chainId)] ?? null;
 }
 
 async function rememberTab(chainId, tabId) {
-  const tabs = await workerTabs();
-  if (tabId == null) delete tabs[chainId];
-  else tabs[chainId] = tabId;
-  await chrome.storage.session.set({ workerTabs: tabs });
+  if (tabId == null) await chrome.storage.session.remove(tabKey(chainId));
+  else await chrome.storage.session.set({ [tabKey(chainId)]: tabId });
 }
 
-function waitForLoad(tabId) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error('timeout')); }, LOAD_TIMEOUT_MS);
-    const onUpdated = (id, info) => { if (id === tabId && info.status === 'complete') { cleanup(); resolve(); } };
-    const onRemoved = (id) => { if (id === tabId) { cleanup(); reject(new Error('closed')); } };
-    function cleanup() {
-      clearTimeout(timer);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      chrome.tabs.onRemoved.removeListener(onRemoved);
-    }
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    chrome.tabs.onRemoved.addListener(onRemoved);
-    chrome.tabs.get(tabId).then((t) => { if (t.status === 'complete') { cleanup(); resolve(); } }, () => {});
-  });
+// Calls to one chain run strictly one after another: a single worker tab per site, one request
+// flow at a time (also keeps us gentle on the site). Different chains still run in parallel.
+const queues = {};
+function inQueue(chainId, job) {
+  const run = (queues[chainId] || Promise.resolve()).then(job, job);
+  queues[chainId] = run.catch(() => {});
+  return run;
+}
+
+// Resolves when the tab has finished loading a real page. A freshly created tab can briefly report
+// "complete" while still blank (before its navigation starts), so the URL is checked as well.
+async function waitForLoad(tabId) {
+  const deadline = Date.now() + LOAD_TIMEOUT_MS;
+  for (;;) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error('closed');
+    const url = tab.url || '';
+    if (tab.status === 'complete' && !tab.pendingUrl && /^https?:/.test(url)) return;
+    if (Date.now() > deadline) throw new Error('timeout');
+    await new Promise((r) => setTimeout(r, 150));
+  }
 }
 
 // A tab is usable only if it sits on the chain's own origin and not on a payment/checkout page.
@@ -61,9 +69,9 @@ function tabIsSafe(tab, chain) {
 }
 
 async function ensureTab(chain) {
-  const tabs = await workerTabs();
+  const known = await workerTab(chain.id);
   let tab = null;
-  if (tabs[chain.id] != null) tab = await chrome.tabs.get(tabs[chain.id]).catch(() => null);
+  if (known != null) tab = await chrome.tabs.get(known).catch(() => null);
   if (tab && !tabIsSafe(tab, chain)) {
     // The user (or the site) moved our tab somewhere else — never follow it; start a clean one.
     await rememberTab(chain.id, null);
@@ -133,9 +141,11 @@ async function openForUser(chainId, which) {
 }
 
 async function closeWorkers() {
-  const tabs = await workerTabs();
-  await Promise.all(Object.values(tabs).map((id) => chrome.tabs.remove(id).catch(() => {})));
-  await chrome.storage.session.set({ workerTabs: {} });
+  for (const id of Object.keys(CHAINS)) {
+    const tabId = await workerTab(id);
+    if (tabId != null) await chrome.tabs.remove(tabId).catch(() => {});
+    await rememberTab(id, null);
+  }
   return { ok: true };
 }
 
@@ -146,7 +156,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
   let p;
-  if (msg && msg.t === 'call') p = callAdapter(msg.chain, msg.method, msg.args);
+  if (msg && msg.t === 'call') p = inQueue(String(msg.chain), () => callAdapter(msg.chain, msg.method, msg.args));
   else if (msg && msg.t === 'open') p = openForUser(msg.chain, msg.which);
   else if (msg && msg.t === 'closeWorkers') p = closeWorkers();
   else p = Promise.resolve(fail('FORBIDDEN', 'unknown message'));
