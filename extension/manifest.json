@@ -14,7 +14,7 @@
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_title": "סל חכם" },
   "content_security_policy": {
-    "extension_pages": "default-src 'self'; connect-src 'none'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    "extension_pages": "default-src 'self'; connect-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
   },
   "web_accessible_resources": [
     {

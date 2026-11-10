@@ -5,6 +5,8 @@
 //   const state = createState();               // or createMockSites(state)
 //   state.ramilevy.loggedIn = false;           // log out
 //   state.shufersal.variant = 'shape-changed'; // search returns {foo:1}
+//   state.<chain>.redirectTo = '/some/path';   // the chain's cart-write endpoint answers 302 -> that path
+//   state.hazihinam.errorMarker = 'X';         // /user/info answers an error whose description is X
 //   state.hazihinam.addIncrements = true;      // repeat adds increment instead of set
 //   state.forbiddenHits / state.requests       // recorded traffic
 
@@ -55,6 +57,7 @@ export function createState() {
       deliveryFee: 29.9,
       minOrder: null,
       variant: null,
+      redirectTo: null,
     },
     shufersal: {
       loggedIn: true,
@@ -85,6 +88,7 @@ export function createState() {
       deliveryFee: 19.9,
       minOrder: null,
       variant: null,
+      redirectTo: null,
     },
     hazihinam: {
       loggedIn: true,
@@ -108,7 +112,9 @@ export function createState() {
       orders: [],
       deliveryFee: 25,
       minOrder: 150,
+      errorMarker: null,
       variant: null,
+      redirectTo: null,
     },
   };
 }
@@ -190,6 +196,7 @@ export function createMockSites(state = createState()) {
       return send(res, 200, { q: json.q ?? null, status: 200, total: data.length, data }, cors);
     }
     if (p === '/api/v2/cart' && req.method === 'POST') {
+      if (s.redirectTo) return send(res, 302, '', { ...cors, location: s.redirectTo });
       const items = json.items && typeof json.items === 'object' ? json.items : {};
       const out = rlPrice(items);
       // Persist only with a valid bearer AND the ecomtoken header (SITES.md); otherwise it only prices.
@@ -261,6 +268,9 @@ export function createMockSites(state = createState()) {
         { id: 2, price: { value: s.deliveryFee, formattedValue: `${s.deliveryFee} ₪` } },
       ]);
     }
+    if ((route === '/cart/add' || route === '/cart/update') && req.method === 'POST' && s.redirectTo) {
+      return send(res, 302, '', { location: s.redirectTo });
+    }
     if (route === '/cart/add' && req.method === 'POST') {
       if (!csrfOk()) return send(res, 403, 'csrf');
       if (!s.loaded) return send(res, 400, 'cart not loaded');
@@ -324,6 +334,12 @@ export function createMockSites(state = createState()) {
     let json = {};
     try { json = body ? JSON.parse(body) : {}; } catch { json = {}; }
 
+    if (route === '/user/info' && s.errorMarker) {
+      return send(res, 200, { IsOK: false, Results: null, ErrorResponse: { ErrorCode: 99, ErrorDescription: s.errorMarker } });
+    }
+    if (route === '/item/addItemToCart' && req.method === 'POST' && s.redirectTo) {
+      return send(res, 302, '', { location: s.redirectTo });
+    }
     if (route === '/user/info') return send(res, 200, hzOk({ UserInfo: s.loggedIn ? { FirstName: 'דנה' } : null }));
     if (route === '/item/getItemsBySearch' && req.method === 'POST') {
       if (s.variant === 'shape-changed') return send(res, 200, hzOk({ foo: 1 }));

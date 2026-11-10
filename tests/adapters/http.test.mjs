@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AdapterError, createHttp, need, htmlShape, assertPageSafe } from '../../extension/sites/http.js';
+import {
+  AdapterError, createHttp, need, htmlShape, assertPageSafe, runDiagnose, safeDetail,
+} from '../../extension/sites/http.js';
 import { createAdapter as createRami } from '../../extension/sites/ramilevy.js';
 import { createAdapter as createShufersal } from '../../extension/sites/shufersal.js';
 import { createAdapter as createHazi } from '../../extension/sites/hazihinam.js';
 import meta from '../../extension/sites/shufersal.js';
+import { createState } from '../e2e/mocks/server.mjs';
 import { startMock, makeEnv, ramyStorage } from './helpers.mjs';
 
 const chain = {
@@ -110,4 +113,78 @@ test('network failure maps to NETWORK through an adapter', async () => {
     fetch: async () => { throw new TypeError('Failed to fetch'); }, localStorage: null, now: () => new Date(),
   });
   await assert.rejects(() => a.search('x'), (e) => e.code === 'NETWORK');
+});
+
+test('redirects are never followed: redirect:manual is sent and 3xx / opaqueredirect throw REDIRECT', async () => {
+  const inits = [];
+  const url = 'https://shop.hazi-hinam.co.il/x';
+  const mk = (r) => createHttp(chain, async (u, init) => { inits.push(init); return r; });
+  await assert.rejects(() => mk(resp(302, '', url)).getJson(url), (e) => e.code === 'REDIRECT');
+  await assert.rejects(() => mk({ type: 'opaqueredirect', status: 0, url, text: async () => '' }).getText(url), (e) => e.code === 'REDIRECT');
+  await assert.rejects(() => mk(resp(301, '', url)).postJson(url, {}), (e) => e.code === 'REDIRECT');
+  await assert.rejects(() => mk(resp(307, '', url)).postForm(url, { a: 1 }), (e) => e.code === 'REDIRECT');
+  assert.equal(inits.length, 4);
+  assert.ok(inits.every((i) => i.redirect === 'manual'), 'every request uses redirect:manual');
+  assert.ok(inits.every((i) => i.signal && typeof i.signal.aborted === 'boolean'), 'every request has an abort signal');
+});
+
+test('request timeout aborts and maps to NETWORK timeout', async () => {
+  const url = 'https://shop.hazi-hinam.co.il/slow';
+  const h = createHttp(chain, (u, init) => new Promise((_, rej) => {
+    init.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+  }), { timeoutMs: 20 });
+  await assert.rejects(() => h.getJson(url), (e) => e.code === 'NETWORK' && e.message === 'timeout');
+});
+
+test('safeDetail only lets fixed forms through', () => {
+  assert.equal(safeDetail('HTTP 500'), 'HTTP 500');
+  assert.equal(safeDetail('missing field: Results.Items'), 'missing field: Results.Items');
+  assert.equal(safeDetail('timeout'), 'timeout');
+  assert.equal(safeDetail('redirect'), 'redirect');
+  assert.equal(safeDetail('no method foo'), 'no method');
+  for (const bad of ['SECRET-MARKER-123', 'missing field: a b', 'missing field: https://x/y', 'HTTP 500 at https://x', 'request failed: x',
+    'missing field: a.b/c', '', undefined, null, 'unexpected type at: a']) {
+    assert.equal(safeDetail(bad), undefined, String(bad));
+  }
+});
+
+test('runDiagnose rows carry code + whitelisted detail, never free text', async () => {
+  const fake = { lastRaw: undefined, resetRaw() { this.lastRaw = undefined; } };
+  const rows = await runDiagnose(fake, [
+    ['a', async () => { fake.lastRaw = { x: 'secret' }; }],
+    ['b', async () => { throw new AdapterError('SHAPE_CHANGED', 'missing field: Results.Items'); }],
+    ['c', async () => { throw new AdapterError('NETWORK', 'SECRET-MARKER-123 https://x/y 7357'); }],
+    ['d', async () => { throw new AdapterError('NETWORK', 'HTTP 502'); }],
+  ]);
+  assert.deepEqual(rows.map((r) => [r.step, r.ok, r.code, r.detail]), [
+    ['a', true, undefined, undefined], ['b', false, 'SHAPE_CHANGED', 'missing field: Results.Items'],
+    ['c', false, 'NETWORK', undefined], ['d', false, 'NETWORK', 'HTTP 502'],
+  ]);
+  assert.ok(rows.every((r) => !('message' in r)));
+  assert.equal(JSON.stringify(rows).includes('SECRET-MARKER'), false);
+  assert.deepEqual(rows[0].shape, { x: '<string:6>' });
+});
+
+test('Shufersal: a redirect from a cart write throws REDIRECT; cartsummary redirect falls back to line sum', async () => {
+  const state = createState();
+  state.shufersal.cart = [{ code: 'P_522319', qty: 1 }];
+  state.shufersal.redirectTo = '/online/he/checkout/payment';
+  const mock = await startMock(state);
+  try {
+    const a = createShufersal(makeEnv(mock));
+    await assert.rejects(() => a.setItem('P_100200', 1, { soldBy: 'unit' }), (e) => e.code === 'REDIRECT');
+    assert.deepEqual(state.forbiddenHits, []);
+    assert.deepEqual(state.requests.filter((r) => /checkout|payment/.test(r.path)), []);
+  } finally {
+    await mock.close();
+  }
+  const sum = createShufersal({
+    ...makeEnv({ fetchImpl: async (u) => (String(u).endsWith('/cart/cartsummary')
+      ? { status: 302, url: u, text: async () => '' }
+      : { status: 200, url: u, text: async () => (String(u).includes('cart/load')
+        ? '<article data-product-code="P_1" data-entry-number="0" data-entry-qty="1.0"><div class="miglog-prod-name">x</div><div class="miglog-prod-totalPrize">5.00 ₪</div></article>' : '[]') }) }),
+  });
+  const cart = await sum.getCart();
+  assert.equal(cart.itemsTotal, 5);
+  assert.equal(cart.grandTotal, null);
 });

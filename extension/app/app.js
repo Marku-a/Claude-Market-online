@@ -15,6 +15,8 @@ const ERRORS = {
   SHAPE_CHANGED: 'האתר השתנה — הריצו אבחון ושלחו את הדוח',
   NETWORK: 'בעיית תקשורת — נסו שוב',
   UNSUPPORTED: 'פעולה זו עדיין לא נתמכת באתר הזה',
+  REDIRECT: 'האתר הפנה לדף אחר — ייתכן שצריך להתחבר מחדש באתר',
+  FORBIDDEN: 'הפעולה נחסמה כדי לא להתקרב לדף תשלום',
 };
 const errText = (code) => ERRORS[code] || ERRORS.NETWORK;
 const MATCH_TEXT = { identical: 'זהה', similar: 'דומה', different: 'שונה', missing: 'חסר' };
@@ -308,7 +310,7 @@ function drawReview(body) {
       if (e.product) {
         put(td, h('div', { text: e.product.name }),
           h('div', null, num(e.lineTotal), e.promoApplied ? ' · ' + (e.product.promo.description || 'מבצע') : ''));
-      } else put(td, h('div', { text: e.missingReason || 'לא נמצא' }));
+      } else put(td, h('div', { text: e.searchError ? 'החיפוש נכשל' : (e.missingReason || 'לא נמצא') }));
       put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
       if (e.results.length > 1 || (e.results.length && !e.product)) {
         const sid = `sel${i}-${c}`;
@@ -383,7 +385,8 @@ function chainWarnings(c, s, fr) {
   const bad = fr.items.filter((i) => !i.ok);
   for (const i of bad) {
     const name = S.plan.lines[i.line].query;
-    w.push(i.actualQty > 0 ? `${name}: נוספה כמות שונה (${i.actualQty} במקום ${i.wantedQty})` : `${name}: לא נוסף לעגלה${i.code ? ' — ' + errText(i.code) : ''}`);
+    const added = i.actualQty - (i.existingQty || 0);
+    w.push(added > 0 ? `${name}: נוספה כמות שונה (${added} במקום ${i.wantedQty})` : `${name}: לא נוסף לעגלה${i.code ? ' — ' + errText(i.code) : ''}`);
   }
   if (fr.extra) w.push(`יש בעגלה ${fr.extra.count} מוצרים קודמים (${money(fr.extra.total)}) שלא נכללו בהשוואה`);
   if (fr.couldNotEmpty) w.push('לא ניתן לרוקן את העגלה אוטומטית — רוקנו אותה באתר');

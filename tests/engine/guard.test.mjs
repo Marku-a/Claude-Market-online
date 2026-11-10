@@ -10,12 +10,15 @@ const S = 'https://www.shufersal.co.il';
 describe('isForbiddenUrl', () => {
   const allowed = [
     H + '/', H + '/cart', H + '/online/he/cart', H + '/api/catalog', H + '/search?q=חלב',
-    R + '/', R + '/api/search?q=milk', R + '/cart', S + '/online/he/cart', S + '/online/he/search?q=%D7%97%D7%9C%D7%91',
+    R + '/', R + '/api/search?q=milk', R + '/cart',
+    H + '/search?q=credit', H + '/search?q=Pay Day', H + '/search?q=billing+secure', S + '/online/he/search/results?q=pay:relevance',
+    H + '/cart?next=%2Fcheckout', R + '/x?returnUrl=https://x/payment', S + '/online/he/cart', S + '/online/he/search?q=%D7%97%D7%9C%D7%91',
   ];
   const blocked = [
     H + '/checkout', R + '/cart/checkout', S + '/payment', S + '/online/he/CHECKOUT/step1',
     H + '/#/checkout', H + '/cart#/checkout', R + '/pay', R + '/pay?x=1', S + '/x/billing', S + '/credit-card',
-    H + '/tashlum', R + '/order-confirm', S + '/secure/login', H + '/cart?next=%2Fcheckout',
+    H + '/tashlum', R + '/order-confirm', S + '/secure/login',
+    H + '/%63heckout', H + '/a/%2e%2e/checkout', H + '/%2563heckout', H + '/x#/payment', H + '/x#%63heckout',
     'https://evil.example.com/cart', 'https://shop.hazi-hinam.co.il.evil.com/cart',
     'http://shop.hazi-hinam.co.il/cart', 'https://www.google.com/', 'javascript:alert(1)', 'not a url', '',
   ];

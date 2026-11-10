@@ -29,12 +29,12 @@ Plain ES modules, no build step, no third-party runtime code. Node ≥ 20 for te
 
 S1. `host_permissions`: only `https://www.rami-levy.co.il/*`, `https://www.shufersal.co.il/*`,
     `https://shop.hazi-hinam.co.il/*`. Permissions: `storage`, `tabs`, `scripting`. Nothing else.
-S2. Extension pages CSP: `default-src 'self'; connect-src 'none'; img-src 'self' https: data:; style-src 'self'; script-src 'self'; object-src 'none'`.
+S2. Extension pages CSP: `default-src 'self'; connect-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'`.
     The UI and the service worker can make **no** network requests. All site traffic happens inside a tab of that
     site, same-origin.
 S3. No static `content_scripts`. Code is injected only by `chrome.scripting.executeScript` into a tab the
     extension itself opened, after `guard.isForbiddenUrl(tab.url)` returned false.
-S4. `guard.isForbiddenUrl(url)`: true for any URL whose path/hash/query matches
+S4. `guard.isForbiddenUrl(url)`: true for any URL whose path or hash (raw or decoded; not the query string) matches
     `/(checkout|payment|pay\b|credit|billing|tashlum|order-confirm|secure)/i` or the per-chain patterns in the
     registry, and for any origin not in the registry. Adapters call `guard.assertSafe(location.href)` before
     every action and never navigate to, fetch, or read forbidden URLs. `fetch` wrappers in adapters go through
@@ -72,7 +72,7 @@ Product key for matching = barcode if present else `normalize(name)`.
   async emptyCart()             -> { ok }
 }
 ```
-Rules: throw `AdapterError(code, message)` with codes `NOT_LOGGED_IN | BLOCKED | SHAPE_CHANGED | NETWORK | FORBIDDEN`.
+Rules: throw `AdapterError(code, message)` with codes `NOT_LOGGED_IN | BLOCKED | SHAPE_CHANGED | NETWORK | FORBIDDEN | UNSUPPORTED | REDIRECT` (redirects are never followed: `redirect: 'manual'`).
 `SHAPE_CHANGED` when a response lacks expected fields — never guess. All parsing goes through small pure
 functions (`parseSearchResponse(json)`, `parseCart(json)`, `parseOrders(json)`) exported for unit tests.
 

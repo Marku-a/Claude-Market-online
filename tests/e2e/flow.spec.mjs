@@ -206,3 +206,93 @@ test('diagnostics report contains structure only', async () => {
     assert.deepEqual(h.state.forbiddenHits, []);
   } finally { await h.close(); }
 });
+
+const REDIRECT_TEXT = 'האתר הפנה לדף אחר — ייתכן שצריך להתחבר מחדש באתר';
+
+test('security: a site redirecting a cart write to a checkout page is never followed', async () => {
+  const state = simpleState();
+  state.shufersal.redirectTo = '/online/he/checkout/payment';
+  const h = await launch({ state });
+  try {
+    await toConnect(h);
+    await runList(h);
+    await fill(h);
+    assert.deepEqual(state.forbiddenHits, [], 'the redirect target was never requested');
+    assert.ok(!state.requests.some((r) => /checkout|payment/.test(r.path)));
+    assert.ok(!h.pageUrls.some((u) => /checkout|payment/.test(u)));
+    assert.deepEqual(state.shufersal.cart, []);
+    const card = await h.app.locator('[data-testid="chain-card-shufersal"]').innerText();
+    assert.ok(card.includes(REDIRECT_TEXT), 'Shufersal shows the redirect message');
+    // the other chains completed
+    assert.equal(money(await text(h, 'final-hazihinam')), 46);
+    assert.equal(money(await text(h, 'final-ramilevy')), 53.9);
+    assert.equal(await h.app.locator('[data-testid="chain-card-hazihinam"] [data-testid="winner"]').count(), 1);
+    assert.deepEqual(h.outside, []);
+  } finally { await h.close(); }
+});
+
+test('existing cart with overlapping products: "keep" raises quantities, compares only our units', async () => {
+  const state = simpleState();
+  state.shufersal.cart = [{ code: 'P_7290000000012', qty: 5 }];
+  state.hazihinam.cart = { 2001: 3 };
+  state.ramilevy.cart = { 1001: '3.00' };
+  const h = await launch({ state });
+  try {
+    await toConnect(h);
+    await runList(h);
+    for (const c of ['ramilevy', 'shufersal', 'hazihinam']) await tid(h.app, `policy-${c}-keep`).check();
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, { 1001: '5.00', 1002: '1.00' });
+    assert.deepEqual(state.hazihinam.cart, { 2001: 5, 2002: 1 });
+    assert.deepEqual(state.shufersal.cart.map((l) => [l.code, Number(l.qty)]).sort(), [['P_7290000000012', 7], ['P_7290000000029', 1]]);
+    assert.equal(money(await text(h, 'total-ramilevy')), 24);
+    assert.equal(money(await text(h, 'total-shufersal')), 21);
+    assert.equal(money(await text(h, 'total-hazihinam')), 21);
+    assert.equal(await h.app.locator('[data-testid="chain-card-shufersal"] [data-testid="winner"]').count(), 1);
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally { await h.close(); }
+});
+
+test('diagnostics report has no free text: server error descriptions never appear', async () => {
+  const state = simpleState();
+  state.hazihinam.variant = 'shape-changed';
+  state.hazihinam.errorMarker = 'SECRET-MARKER-123';
+  const h = await launch({ state });
+  try {
+    const page = await h.ctx.newPage();
+    await page.goto(`chrome-extension://${h.extId}/diag/index.html`);
+    await tid(page, 'btn-diag').click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="diag-report"]');
+      return el && el.textContent.includes('shufersal') && el.textContent.includes('ramilevy') && el.textContent.includes('hazihinam');
+    }, null, { timeout: 90000 });
+    const report = await tid(page, 'diag-report').innerText();
+    assert.ok(!report.includes('SECRET-MARKER-123'), 'server error text must not leak');
+    assert.ok(report.includes('"ok": false'));
+    const parsed = JSON.parse(report);
+    const hazi = Object.fromEntries(parsed.hazihinam.map((r) => [r.step, r]));
+    assert.equal(hazi.checkLogin.ok, false);
+    assert.equal(hazi.checkLogin.code, 'NETWORK');
+    assert.equal(hazi.checkLogin.detail, undefined);
+    assert.equal(hazi.search.code, 'SHAPE_CHANGED');
+    assert.equal(hazi.search.detail, 'missing field: Results.Items');
+    assert.ok(parsed.hazihinam.every((r) => !('message' in r)));
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally { await h.close(); }
+});
+
+test('"delete all data" leaves chrome.storage.local empty', async () => {
+  const h = await launch({ state: simpleState() });
+  try {
+    await toConnect(h);
+    await runList(h);
+    await fill(h);
+    const before = await h.storage();
+    assert.ok(Object.keys(before).length >= 3, 'the run stored profile, history and last runs');
+    await h.app.locator('[data-testid="btn-settings"], #btn-settings').first().click();
+    h.app.once('dialog', (d) => d.accept());
+    await tid(h.app, 'btn-clear').click();
+    await tid(h.app, 'btn-save-settings').waitFor();
+    assert.deepEqual(await h.storage(), {});
+  } finally { await h.close(); }
+});

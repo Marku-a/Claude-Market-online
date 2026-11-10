@@ -8,6 +8,8 @@ const HISTORY_LIMIT = 10;
 const FAVOURITE_MIN_SIM = 0.5;
 const PIN_NAME_SIM = 0.8;
 const MAX_RUNS = 10;
+// A search failing with one of these means the whole chain is unusable (not just one line).
+const CHAIN_FATAL = new Set(['SHAPE_CHANGED', 'NOT_LOGGED_IN', 'BLOCKED', 'REDIRECT']);
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const r2 = (x) => Math.round((x + Math.sign(x) * 1e-9) * 100) / 100;
@@ -146,12 +148,25 @@ export function createRunner({ rpc, store, today, chains }) {
     };
     const chainErrors = {};
     const resultsByChain = {};
+    const searchErrors = {}; // chain -> {lineIndex: code} for non-fatal per-line failures
     await Promise.all(chainIds.map(async (chain) => {
       const per = [];
+      const errs = {};
+      let lastCode = null;
       try {
         for (let i = 0; i < parsed.length; i++) {
           onProgress && onProgress({ chain, phase: 'search', done: i, total: parsed.length, message: parsed[i].query });
-          let results = (await rpc(chain, 'search', [parsed[i].query])) || [];
+          let results;
+          try {
+            results = (await rpc(chain, 'search', [parsed[i].query])) || [];
+          } catch (e) {
+            const code = codeOf(e);
+            if (CHAIN_FATAL.has(code)) throw e; // the whole site is unusable right now
+            errs[i] = code;
+            lastCode = code;
+            per.push([]);
+            continue;
+          }
           const fav = favouriteFor(parsed[i].query);
           if (fav && fav.name) {
             try {
@@ -160,7 +175,13 @@ export function createRunner({ rpc, store, today, chains }) {
           }
           per.push(results);
         }
+        if (parsed.length && Object.keys(errs).length === parsed.length) {
+          const e = new Error('all searches failed');
+          e.code = lastCode;
+          throw e;
+        }
         resultsByChain[chain] = per;
+        searchErrors[chain] = errs;
         onProgress && onProgress({ chain, phase: 'search', done: parsed.length, total: parsed.length, message: '' });
       } catch (e) {
         chainErrors[chain] = { code: codeOf(e), message: e.message || '' };
@@ -174,7 +195,10 @@ export function createRunner({ rpc, store, today, chains }) {
       for (const c of okChains) byChain[c] = resultsByChain[c][i];
       const m = matchLine(pl, byChain, profile);
       const line = { raw: pl.raw, query: pl.query, qty: m.qty, reference: m.reference, enabled: true, chains: {} };
-      for (const c of okChains) line.chains[c] = { ...m.chains[c], results: byChain[c] };
+      for (const c of okChains) {
+        line.chains[c] = { ...m.chains[c], results: byChain[c] };
+        if (searchErrors[c] && searchErrors[c][i]) line.chains[c].searchError = searchErrors[c][i];
+      }
       const pin = pins[normalize(pl.query)];
       if (pin) {
         for (const c of okChains) {
@@ -254,6 +278,8 @@ export function createRunner({ rpc, store, today, chains }) {
     return out;
   }
 
+  const sameQty = (a, b) => Math.abs(a - b) < 1e-9;
+
   async function fill(plan, chainIds, policyByChain, { onProgress } = {}) {
     const out = {};
     await Promise.all(chainIds.map(async (chain) => {
@@ -264,25 +290,40 @@ export function createRunner({ rpc, store, today, chains }) {
       const total = jobs.length + 2;
       const prog = (message) => onProgress && onProgress({ chain, phase: 'fill', done: step, total, message });
       try {
+        // 'absolute': the cart was emptied, quantities are set as wanted.
+        // 'keep': existing quantities stay; every product of ours is raised to existing + wanted
+        // (quantities only ever increase, which every site supports).
+        let mode = 'keep';
         if ((policyByChain && policyByChain[chain]) === 'empty') {
           prog('מרוקנים עגלה');
           try {
-            await rpc(chain, 'emptyCart', []);
+            const r = await rpc(chain, 'emptyCart', []);
+            if (r && r.ok === false) res.couldNotEmpty = true;
+            else mode = 'absolute';
           } catch (e) {
             if (codeOf(e) !== 'UNSUPPORTED') throw e;
             res.couldNotEmpty = true;
           }
         }
+        const existing = {};
+        if (mode === 'keep') {
+          const before = await rpc(chain, 'getCart', []);
+          for (const x of (before && before.lines) || []) existing[String(x.id)] = (existing[String(x.id)] || 0) + (isNum(x.qty) ? x.qty : 0);
+        }
         step++;
         for (const { l, idx } of jobs) {
           const e = l.chains[chain];
+          const id = String(e.product.id);
           prog(l.query);
-          const item = { line: idx, wantedQty: e.qty, actualQty: 0, ok: false, code: null };
+          const existingQty = existing[id] || 0;
+          const target = existingQty + e.qty;
+          const item = { line: idx, productId: id, existingQty, wantedQty: e.qty, actualQty: 0, ok: false, code: null, share: null };
           try {
-            const r = await rpc(chain, 'setItem', [e.product.id, e.qty, e.product]);
-            item.ok = !!(r && r.ok) && (!isNum(r.qty) || r.qty === e.qty);
-            item.actualQty = r && isNum(r.qty) ? r.qty : r && r.ok ? e.qty : 0;
-            if (!r || !r.ok) item.code = 'SHAPE_CHANGED';
+            const r = await rpc(chain, 'setItem', [e.product.id, target, e.product]);
+            item.actualQty = r && isNum(r.qty) ? r.qty : r && r.ok ? target : 0;
+            item.ok = !!(r && r.ok) && sameQty(item.actualQty, target);
+            if (!r || !r.ok) item.code = (r && r.code) || 'SHAPE_CHANGED';
+            if (item.actualQty > 0) existing[id] = item.actualQty;
           } catch (err) {
             item.code = codeOf(err);
           }
@@ -293,13 +334,37 @@ export function createRunner({ rpc, store, today, chains }) {
         try {
           const cart = await rpc(chain, 'getCart', []);
           res.rawCart = cart;
-          const ours = new Set(jobs.map(({ l }) => String(l.chains[chain].product.id)));
-          const mine = (cart.lines || []).filter((x) => ours.has(String(x.id)));
-          const others = (cart.lines || []).filter((x) => !ours.has(String(x.id)));
-          if (others.length) {
-            const ourTotal = r2(mine.reduce((s, x) => s + (x.lineTotal || 0), 0));
-            res.extra = { count: others.length, total: r2(others.reduce((s, x) => s + (x.lineTotal || 0), 0)) };
-            res.cart = { ...cart, itemsTotal: ourTotal, grandTotal: null };
+          const lines = cart.lines || [];
+          const ours = new Set(res.items.map((i) => i.productId));
+          // Our share of each of our cart lines: only the units we added (not what was there before).
+          let ourTotal = 0;
+          let overlapRest = 0;
+          let overlapCount = 0;
+          for (const it of res.items) {
+            const cl = lines.find((x) => String(x.id) === it.productId);
+            if (!cl || !isNum(cl.lineTotal)) continue;
+            const denom = isNum(cl.qty) && cl.qty > 0 ? cl.qty : it.actualQty;
+            const added = Math.min(it.wantedQty, Math.max(it.actualQty - it.existingQty, 0));
+            it.share = denom > 0 ? (cl.lineTotal * added) / denom : 0;
+          }
+          const seen = new Set();
+          for (const it of res.items) {
+            if (it.share == null) continue;
+            ourTotal += it.share;
+            if (seen.has(it.productId)) continue;
+            seen.add(it.productId);
+            const cl = lines.find((x) => String(x.id) === it.productId);
+            const mineAll = res.items.filter((x) => x.productId === it.productId && x.share != null).reduce((t, x) => t + x.share, 0);
+            const rest = cl.lineTotal - mineAll;
+            if (rest > 1e-9) { overlapRest += rest; overlapCount++; }
+          }
+          const others = lines.filter((x) => !ours.has(String(x.id)));
+          if (others.length || overlapCount) {
+            res.extra = {
+              count: others.length + overlapCount,
+              total: r2(others.reduce((s, x) => s + (x.lineTotal || 0), 0) + overlapRest),
+            };
+            res.cart = { ...cart, itemsTotal: r2(ourTotal), grandTotal: null };
           } else {
             res.cart = cart;
           }
@@ -325,19 +390,21 @@ export function createRunner({ rpc, store, today, chains }) {
         chainRuns[chain] = { status: 'error', code: fr.error.code };
         continue;
       }
-      const failed = new Set(fr.items.filter((i) => !i.ok && i.actualQty === 0).map((i) => i.line));
+      const itemFor = new Map(fr.items.map((i) => [i.line, i]));
       const lines = [];
       plan.lines.forEach((l, idx) => {
         if (l.enabled === false || !l.chains[chain]) return;
         const e = l.chains[chain];
-        const miss = !e.product || failed.has(idx);
-        // Prefer the price the site itself charges for this line (after its own promotions).
-        const siteLine = !miss && fr.rawCart && Array.isArray(fr.rawCart.lines)
-          ? fr.rawCart.lines.find((x) => String(x.id) === String(e.product.id)) : null;
-        const siteTotal = siteLine && typeof siteLine.lineTotal === 'number' ? siteLine.lineTotal : null;
+        const it = itemFor.get(idx);
+        // missing = not in the re-read cart, or none of our units were added
+        const inCart = !fr.rawCart || !Array.isArray(fr.rawCart.lines) || !e.product ||
+          fr.rawCart.lines.some((x) => String(x.id) === String(e.product.id));
+        const miss = !e.product || !it || !inCart || it.actualQty - it.existingQty <= 0;
+        // Our share of the price the site itself charges for this line (after its own promotions).
+        const lineTotal = miss ? 0 : (it.share ?? e.lineTotal);
         lines.push({
           line: l.query, match: miss ? 'missing' : e.match, product: miss ? null : e.product,
-          qty: e.qty, lineTotal: miss ? 0 : (siteTotal ?? e.lineTotal),
+          qty: e.qty, lineTotal,
         });
       });
       chainRuns[chain] = { status: 'ok', lines, cart: fr.cart };

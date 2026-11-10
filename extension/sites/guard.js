@@ -1,6 +1,6 @@
 // Payment-page guard (SPEC S4). Pure: no chrome.*, no DOM.
 
-const GENERIC = /(checkout|payment|pay\b|credit|billing|tashlum|order-confirm|secure)/i;
+export const GENERIC = /(checkout|payment|pay\b|credit|billing|tashlum|order-confirm|secure)/i;
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
 function chainList(registry) {
@@ -22,7 +22,8 @@ function forbiddenError(url) {
 }
 
 // True for unparsable URLs, origins outside the registry, non-https (except opted-in localhost),
-// and any path/query/hash matching the generic or per-chain forbidden patterns.
+// and any path/hash matching the generic or per-chain forbidden patterns (the query string is not
+// matched: a search for "credit" or "Pay Day" is harmless, and redirects are never followed).
 export function isForbiddenUrl(url, registry) {
   let u;
   try {
@@ -37,8 +38,9 @@ export function isForbiddenUrl(url, registry) {
     if (u.protocol !== 'https:') return true;
     if (!chains.some((c) => c.origin === u.origin || (c.apiOrigins || []).includes(u.origin))) return true;
   }
-  const target = u.pathname + u.search + u.hash;
-  const variants = [target, safeDecode(target)];
+  const target = u.pathname + u.hash;
+  const once = safeDecode(target);
+  const variants = [target, once, safeDecode(once)];
   if (variants.some((t) => GENERIC.test(t))) return true;
   for (const c of chains) {
     for (const re of c.forbidden || []) {

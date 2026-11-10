@@ -2,10 +2,12 @@
 // It never makes network requests itself (CSP connect-src 'none'); all site traffic happens
 // same-origin inside a tab of that site.
 import { CHAINS, chainForUrl } from './sites/registry.js';
-import { isForbiddenUrl } from './sites/guard.js';
+import { isForbiddenUrl, GENERIC } from './sites/guard.js';
 
 const LOAD_TIMEOUT_MS = 45000;
-const CALL_TIMEOUT_MS = 60000;
+// Hard cap for one adapter call. When hit, the worker tab is closed so nothing can keep mutating a cart.
+const CALL_CAP_MS = 240000;
+const SETTLE_MS = 5000;
 const ADAPTER_METHODS = new Set([
   'checkLogin', 'getDeliveryContext', 'getOrders', 'search', 'getCart', 'setItem', 'emptyCart', 'diagnose',
 ]);
@@ -40,7 +42,7 @@ async function rememberTab(chainId, tabId) {
 
 // Calls to one chain run strictly one after another: a single worker tab per site, one request
 // flow at a time (also keeps us gentle on the site). Different chains still run in parallel.
-const queues = {};
+const queues = Object.create(null);
 function inQueue(chainId, job) {
   const run = (queues[chainId] || Promise.resolve()).then(job, job);
   queues[chainId] = run.catch(() => {});
@@ -88,8 +90,16 @@ async function ensureTab(chain) {
 }
 
 // Runs inside the site tab (isolated world). Must be self-contained.
-async function injected(moduleUrl, method, args) {
+async function injected(moduleUrl, method, args, patterns) {
   try {
+    // Never run inside a payment/checkout page (checked on path + hash, before importing anything).
+    const here = location.pathname + location.hash;
+    let dec = here;
+    try { dec = decodeURIComponent(decodeURIComponent(here)); } catch { /* keep raw */ }
+    for (const [src, flags] of patterns || []) {
+      const re = new RegExp(src, flags);
+      if (re.test(here) || re.test(dec)) return { ok: false, code: 'FORBIDDEN', message: 'payment page' };
+    }
     const title = document.title || '';
     if (/just a moment|רק רגע|attention required|access denied/i.test(title)) {
       return { ok: false, code: 'BLOCKED', message: title };
@@ -106,9 +116,11 @@ async function injected(moduleUrl, method, args) {
   }
 }
 
+const sourceOf = (re) => [re.source, re.flags.replace(/[gy]/g, '')];
+
 async function callAdapter(chainId, method, args) {
+  if (!Object.hasOwn(CHAINS, chainId)) return fail('FORBIDDEN', 'unknown chain');
   const chain = CHAINS[chainId];
-  if (!chain) return fail('FORBIDDEN', 'unknown chain');
   if (!ADAPTER_METHODS.has(method)) return fail('FORBIDDEN', 'unknown method');
   let tab;
   try {
@@ -117,23 +129,33 @@ async function callAdapter(chainId, method, args) {
     return fail(e.code || 'NETWORK', 'האתר לא נטען: ' + e.message);
   }
   const moduleUrl = chrome.runtime.getURL(`sites/${chain.id}.js`);
+  const patterns = [GENERIC, ...(chain.forbidden || [])].map(sourceOf);
+  // Always wait for the injected call to settle before returning (the queue must not move on while
+  // it may still be mutating a cart).
   const run = chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: injected,
-    args: [moduleUrl, method, args || []],
-  });
-  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), CALL_TIMEOUT_MS));
-  try {
-    const [res] = await Promise.race([run, timeout]);
-    return res && res.result ? res.result : fail('NETWORK', 'no result');
-  } catch (e) {
-    return fail('NETWORK', String(e.message || e));
+    args: [moduleUrl, method, args || [], patterns],
+  }).then((v) => ({ v }), (e) => ({ e }));
+  let timer;
+  const cap = new Promise((resolve) => { timer = setTimeout(() => resolve(null), CALL_CAP_MS); });
+  const first = await Promise.race([run, cap]);
+  clearTimeout(timer);
+  if (first === null) {
+    // Hard cap: close the worker tab (stops the injected call) and forget it.
+    await chrome.tabs.remove(tab.id).catch(() => {});
+    await rememberTab(chain.id, null);
+    await Promise.race([run, new Promise((r) => setTimeout(r, SETTLE_MS))]);
+    return fail('NETWORK', 'timeout');
   }
+  if (first.e) return fail('NETWORK', String((first.e && first.e.message) || first.e));
+  const res = first.v && first.v[0];
+  return res && res.result ? res.result : fail('NETWORK', 'no result');
 }
 
 async function openForUser(chainId, which) {
+  if (!Object.hasOwn(CHAINS, chainId)) return fail('FORBIDDEN', 'unknown chain');
   const chain = CHAINS[chainId];
-  if (!chain) return fail('FORBIDDEN', 'unknown chain');
   const url = which === 'cart' ? chain.cartUrl : which === 'login' ? chain.loginUrl : chain.homeUrl;
   if (isForbiddenUrl(url, registry)) return fail('FORBIDDEN', 'forbidden url');
   await chrome.tabs.create({ url, active: true });

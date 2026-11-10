@@ -3,6 +3,7 @@
 import {
   AdapterError, createHttp, need, num, checkId, assertPageSafe, runDiagnose, lazyEnv,
 } from './http.js';
+import { CHAINS } from './registry.js';
 
 const ORIGIN = 'https://www.rami-levy.co.il';
 const API = 'https://www-api.rami-levy.co.il';
@@ -18,7 +19,7 @@ export const meta = {
   homeUrl: `${ORIGIN}/he`,
   cartUrl: `${ORIGIN}/he`, // no /cart page: the cart is a side panel on the home page
   loginUrl: `${ORIGIN}/he`,
-  forbidden: [/\/dashboard\/checkout/i],
+  forbidden: CHAINS.ramilevy.forbidden, // single source of truth: registry.js
   cartHint: 'לחצו על סמל סל הקניות בראש האתר – העגלה נפתחת בחלונית בצד',
 };
 

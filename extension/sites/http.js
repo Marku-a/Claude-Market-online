@@ -8,7 +8,7 @@ export class AdapterError extends Error {
   constructor(code, message) {
     super(message || code);
     this.name = 'AdapterError';
-    this.code = code; // NOT_LOGGED_IN|BLOCKED|SHAPE_CHANGED|NETWORK|FORBIDDEN|UNSUPPORTED
+    this.code = code; // NOT_LOGGED_IN|BLOCKED|SHAPE_CHANGED|NETWORK|FORBIDDEN|UNSUPPORTED|REDIRECT
   }
 }
 
@@ -47,16 +47,11 @@ export function num(v) {
   return null;
 }
 
-// Registry used by the guard: the shared one plus this chain's own metadata (its forbidden patterns).
-export function registryFor(chain) {
-  return { ...CHAINS, [chain.id]: { ...(CHAINS[chain.id] || {}), ...chain } };
-}
-
 // Called at the start of every adapter method (only when a page location exists).
-export function assertPageSafe(chain, env) {
+export function assertPageSafe(_chain, env) {
   const href = env && ((env.document && env.document.location && env.document.location.href) ||
     (env.location && env.location.href));
-  if (href) assertSafe(href, registryFor(chain));
+  if (href) assertSafe(href, CHAINS);
 }
 
 // Structure-only summary of an HTML response for diagnostics (no text content).
@@ -75,19 +70,30 @@ export function htmlShape(text) {
   };
 }
 
-export function createHttp(chain, fetchImpl = (...a) => globalThis.fetch(...a)) {
-  const safeFetch = makeSafeFetch(chain.origin, registryFor(chain), fetchImpl, chain.apiOrigins || []);
+export const REQUEST_TIMEOUT_MS = 30000;
+
+export function createHttp(chain, fetchImpl = (...a) => globalThis.fetch(...a), { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
+  const safeFetch = makeSafeFetch(chain.origin, CHAINS, fetchImpl, chain.apiOrigins || []);
   const state = { lastRaw: undefined };
 
   async function request(method, url, { headers, body } = {}) {
     let res;
     let text;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
     try {
-      res = await safeFetch(url, { method, headers, body, credentials: 'include', redirect: 'follow' });
+      // Redirects are never followed (a redirect could lead to a payment page): 'manual'.
+      res = await safeFetch(url, { method, headers, body, credentials: 'include', redirect: 'manual', signal: ctl.signal });
+      if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+        throw new AdapterError('REDIRECT', 'redirect');
+      }
       text = await res.text();
     } catch (e) {
+      if (ctl.signal.aborted) throw new AdapterError('NETWORK', 'timeout');
       if (e && (e.code === 'FORBIDDEN' || e instanceof AdapterError)) throw e;
       throw new AdapterError('NETWORK', `request failed: ${e && e.message ? e.message : e}`);
+    } finally {
+      clearTimeout(timer);
     }
     const status = res.status;
     if (status === 401 || status === 403) {
@@ -148,8 +154,18 @@ export function createHttp(chain, fetchImpl = (...a) => globalThis.fetch(...a)) 
   };
 }
 
-// Diagnostics: runs each [name, fn] step, returns [{step, ok, code?, message?, shape}] where shape is the
-// redacted structure of the LAST raw response of that step (no values).
+// Diagnostics rows carry no free text: only these fixed forms may appear as `detail`.
+export function safeDetail(message) {
+  const m = String(message ?? '');
+  if (/^HTTP \d{3}$/.test(m)) return m;
+  if (/^missing field: [A-Za-z0-9_$]+(\.[A-Za-z0-9_$]+)*$/.test(m)) return m;
+  if (m === 'timeout' || m === 'redirect') return m;
+  if (/^no method\b/.test(m)) return 'no method';
+  return undefined;
+}
+
+// Runs each [name, fn] step, returns [{step, ok, code?, detail?, shape}] where shape is the redacted
+// structure of the LAST raw response of that step (no values).
 export async function runDiagnose(http, steps) {
   const out = [];
   for (const [step, fn] of steps) {
@@ -160,7 +176,8 @@ export async function runDiagnose(http, steps) {
     } catch (e) {
       row.ok = false;
       row.code = (e && e.code) || 'NETWORK';
-      row.message = String((e && e.message) || e).slice(0, 200);
+      const d = safeDetail(e && e.message);
+      if (d) row.detail = d;
     }
     const raw = http.lastRaw;
     row.shape = raw === undefined ? null : typeof raw === 'string' ? htmlShape(raw) : redactShape(raw);

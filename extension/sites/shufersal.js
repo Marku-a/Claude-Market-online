@@ -3,6 +3,7 @@
 import {
   AdapterError, createHttp, need, num, checkId, assertPageSafe, runDiagnose, lazyEnv,
 } from './http.js';
+import { CHAINS } from './registry.js';
 
 const ORIGIN = 'https://www.shufersal.co.il';
 const BASE = `${ORIGIN}/online/he`;
@@ -19,14 +20,7 @@ export const meta = {
   homeUrl: `${BASE}/`,
   cartUrl: `${BASE}/cart/cartsummary`,
   loginUrl: `${BASE}/`,
-  forbidden: [
-    /\/online\/he\/checkout/i,
-    /\/cart\/checkout/i,
-    /\/payment/i,
-    /\/j_spring_security_check/i,
-    /\/otp(\b|\/|$)/i,
-    /\/cart\/cartFromOrder/i,
-  ],
+  forbidden: CHAINS.shufersal.forbidden, // single source of truth: registry.js
   cartHint: 'לחצו על סמל העגלה בראש האתר, או על "מעבר לעגלה" – נפתח עמוד סיכום העגלה',
 };
 
@@ -253,7 +247,7 @@ export function createAdapter(env) {
       try {
         total = parseSummaryTotal(parseHtml(await http.getText(`${BASE}/cart/cartsummary`, { headers: XHR })));
       } catch (e) {
-        if (!(e instanceof AdapterError) || e.code !== 'NOT_LOGGED_IN') throw e;
+        if (!(e instanceof AdapterError) || (e.code !== 'NOT_LOGGED_IN' && e.code !== 'REDIRECT')) throw e;
       }
       const view = lines.map(({ id, name, qty, lineTotal, entryNumber }) => ({ id, name, qty, lineTotal, entryNumber }));
       if (total === null) {

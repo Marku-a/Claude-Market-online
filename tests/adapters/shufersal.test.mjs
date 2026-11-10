@@ -4,13 +4,16 @@ import adapterDefault, {
   createAdapter, parseSearch, parseCartDoc, parseSummaryTotal, parsePrice, parseDeliveryFee,
   parseOrderList, parseOrderDetail, toIsoDate,
 } from '../../extension/sites/shufersal.js';
+import { CHAINS } from '../../extension/sites/registry.js';
+import { isForbiddenUrl } from '../../extension/sites/guard.js';
 import { fixture, startMock, makeEnv, parseHtml, leaks } from './helpers.mjs';
 
 test('default export imports cleanly in Node and carries metadata', () => {
   assert.equal(adapterDefault.id, 'shufersal');
   assert.equal(adapterDefault.cartUrl, 'https://www.shufersal.co.il/online/he/cart/cartsummary');
+  assert.equal(adapterDefault.forbidden, CHAINS.shufersal.forbidden); // single source of truth
   assert.ok(adapterDefault.forbidden.some((r) => r.test('/online/he/cart/cartFromOrder')));
-  assert.ok(adapterDefault.forbidden.some((r) => r.test('/online/he/checkout/x')));
+  assert.equal(isForbiddenUrl('https://www.shufersal.co.il/online/he/checkout/x', CHAINS), true);
   assert.ok(!adapterDefault.forbidden.some((r) => r.test('/online/he/authentication/get-status-includes-otp')));
 });
 

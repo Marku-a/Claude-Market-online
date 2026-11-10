@@ -33,7 +33,7 @@ export const CHAINS = {
     cartUrl: 'https://www.shufersal.co.il/online/he/cart/cartsummary',
     loginUrl: 'https://www.shufersal.co.il/online/he/login',
     cartHint: 'העגלה בשופרסל תיפתח ישירות.',
-    forbidden: [/\/cart\/checkout/i, /\/j_spring_security_check/i, /\/otp(\/|$)/i, /\/cart\/cartFromOrder/i],
+    forbidden: [/\/cart\/checkout/i, /\/j_spring_security_check/i, /\/otp(\b|\/|$)/i, /\/cart\/cartFromOrder/i],
   },
 };
 

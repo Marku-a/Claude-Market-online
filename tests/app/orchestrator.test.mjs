@@ -151,11 +151,136 @@ test('fill: empty / keep / UNSUPPORTED / item failure / extra lines', async () =
   assert.equal(fr.ramilevy.items[1].ok, true);
 });
 
-test('fill: getCart failure gives null cart', async () => {
+test('fill: failing pre-read is a chain error; failing re-read gives a null cart', async () => {
   const { runner } = makeEnv({ 'ramilevy.getCart': () => { throw err('SHAPE_CHANGED'); } });
   const plan = await runner.buildPlan('חלב', ['ramilevy']);
   const fr = await runner.fill(plan, ['ramilevy'], {});
-  assert.equal(fr.ramilevy.cart, null);
+  assert.equal(fr.ramilevy.error.code, 'SHAPE_CHANGED'); // never guess existing quantities
+  let n = 0;
+  const e2 = makeEnv({ 'ramilevy.getCart': () => { if (++n > 1) throw err('SHAPE_CHANGED'); return { lines: [] }; } });
+  const plan2 = await e2.runner.buildPlan('חלב', ['ramilevy']);
+  const fr2 = await e2.runner.fill(plan2, ['ramilevy'], {});
+  assert.equal(fr2.ramilevy.cart, null);
+  assert.equal(fr2.ramilevy.error, null);
+});
+
+test('keep: overlapping product is raised to existing + wanted; only our units are compared', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב\nלחם', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 5, lineTotal: 32.5 }); // 5 x 6.5 already there
+  carts.ramilevy.push({ id: 'x', name: 'ישן', qty: 1, lineTotal: 4 });
+  const fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  const sets = calls.filter((c) => c.method === 'setItem').map((c) => [c.args[0], c.args[1]]);
+  assert.deepEqual(sets, [['1', 7], ['2', 1]]); // absolute set of existing + wanted
+  assert.equal(carts.ramilevy.find((l) => l.id === '1').qty, 7);
+  assert.deepEqual(fr.ramilevy.items.map((i) => [i.existingQty, i.wantedQty, i.actualQty, i.ok]), [[5, 2, 7, true], [0, 1, 1, true]]);
+  // our share: 2 of 7 units of milk (13) + bread 7 = 20; the rest is "extra"
+  assert.equal(fr.ramilevy.cart.itemsTotal, 20);
+  assert.equal(fr.ramilevy.cart.grandTotal, null);
+  assert.deepEqual(fr.ramilevy.extra, { count: 2, total: r2(4 + 32.5) });
+  const out = await runner.finish(plan, fr, { discounts: [], deliveryOverrides: {} });
+  const run = out.summary.chains.ramilevy;
+  assert.equal(run.itemsTotal, 20);
+  assert.deepEqual(out.summary.lines.map((l) => l.chains.ramilevy.match), ['similar', 'similar']);
+});
+
+function r2(x) { return Math.round(x * 100) / 100; }
+
+test('keep never lowers a quantity (Hatzi-style sites that cannot decrease)', async () => {
+  let current = 3;
+  const { runner, calls } = makeEnv({
+    'hazihinam.getCart': () => ({ lines: [{ id: '1', name: 'חלב תנובה 3%', qty: current, lineTotal: 6 * current }], itemsTotal: 6 * current }),
+    'hazihinam.setItem': (args) => {
+      if (args[1] < current) throw err('UNSUPPORTED');
+      current = args[1];
+      return { ok: true, qty: current };
+    },
+  });
+  const plan = await runner.buildPlan('2 חלב', ['hazihinam']);
+  assert.equal(plan.lines[0].chains.hazihinam.product.id, '9'); // cheapest; pick the overlapping one explicitly
+  await runner.setChoice(plan, 0, 'hazihinam', '1');
+  const fr = await runner.fill(plan, ['hazihinam'], { hazihinam: 'keep' });
+  assert.equal(fr.hazihinam.items[0].code, null);
+  assert.equal(current, 5);
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => c.args[1]), [5]);
+  assert.equal(fr.hazihinam.cart.itemsTotal, 12); // 2 of 5 units at 6
+});
+
+test('keep: an over-incrementing site is reported honestly (not ok, extra units counted as ours only up to wanted)', async () => {
+  let current = 3;
+  const { runner } = makeEnv({
+    'hazihinam.getCart': () => ({ lines: [{ id: '1', name: 'חלב תנובה 3%', qty: current, lineTotal: 6 * current }], itemsTotal: 6 * current }),
+    'hazihinam.setItem': (args) => { current += args[1]; return { ok: false, qty: current, code: 'UNSUPPORTED' }; },
+  });
+  const plan = await runner.buildPlan('2 חלב', ['hazihinam']);
+  await runner.setChoice(plan, 0, 'hazihinam', '1');
+  const fr = await runner.fill(plan, ['hazihinam'], { hazihinam: 'keep' });
+  const it = fr.hazihinam.items[0];
+  assert.equal(it.ok, false);
+  assert.equal(it.actualQty, 8);
+  assert.equal(it.code, 'UNSUPPORTED');
+  assert.equal(fr.hazihinam.cart.itemsTotal, r2((6 * 8 * 2) / 8));
+});
+
+test('empty: emptyCart {ok:false} counts as couldNotEmpty and continues as keep', async () => {
+  const { runner, carts, calls } = makeEnv({ 'shufersal.emptyCart': () => ({ ok: false }) });
+  const plan = await runner.buildPlan('חלב', ['shufersal']);
+  carts.shufersal.push({ id: '1', name: 'חלב תנובה 3%', qty: 4, lineTotal: 28 });
+  const fr = await runner.fill(plan, ['shufersal'], { shufersal: 'empty' });
+  assert.equal(fr.shufersal.couldNotEmpty, true);
+  assert.equal(calls.find((c) => c.method === 'setItem').args[1], 5); // keep semantics: 4 + 1
+  assert.equal(fr.shufersal.items[0].existingQty, 4);
+  assert.deepEqual(fr.shufersal.extra, { count: 1, total: 28 }); // the 4 units that were already there (4 x 7)
+  assert.equal(fr.shufersal.cart.itemsTotal, 7); // our 1 of 5 units
+});
+
+test('empty: successful emptyCart sets absolute quantities (no pre-read)', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('חלב', ['shufersal']);
+  carts.shufersal.push({ id: '1', name: 'חלב תנובה 3%', qty: 4, lineTotal: 28 });
+  const fr = await runner.fill(plan, ['shufersal'], { shufersal: 'empty' });
+  assert.equal(fr.shufersal.couldNotEmpty, false);
+  assert.equal(calls.find((c) => c.method === 'setItem').args[1], 1);
+  assert.equal(fr.shufersal.extra, null);
+  assert.equal(calls.filter((c) => c.method === 'getCart').length, 1); // only the verification read
+});
+
+test('finish: a line is missing only when absent from the re-read cart or nothing was added', async () => {
+  const { runner } = makeEnv({
+    'ramilevy.setItem': (args, cart) => {
+      if (args[0] === '1') return { ok: false, qty: 0 };
+      cart.push({ id: args[0], name: 'x', qty: args[1], lineTotal: 7 * args[1] });
+      return { ok: true, qty: args[1] };
+    },
+  });
+  const plan = await runner.buildPlan('חלב\nלחם', ['ramilevy']);
+  const fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  const out = await runner.finish(plan, fr, { discounts: [], deliveryOverrides: {} });
+  assert.deepEqual(out.summary.lines.map((l) => l.chains.ramilevy.match), ['missing', 'similar']);
+});
+
+test('buildPlan: non-fatal search failure affects only that line; fatal codes fail the chain', async () => {
+  const { runner } = makeEnv({
+    'hazihinam.search': (args) => { if (args[0] === 'לחם') throw err('NETWORK'); return [prod('hazihinam', '1', 'חלב תנובה 3%', 6)]; },
+    'ramilevy.search': () => { throw err('REDIRECT'); },
+    'shufersal.search': (args) => { if (args[0] === 'לחם') throw err('FORBIDDEN'); throw err('UNSUPPORTED'); },
+  });
+  const plan = await runner.buildPlan('חלב\nלחם', ALL);
+  assert.equal(plan.chainErrors.ramilevy.code, 'REDIRECT');
+  assert.equal(plan.chainErrors.shufersal.code, 'FORBIDDEN'); // every line failed -> last code
+  assert.equal(plan.chainErrors.hazihinam, undefined);
+  const h = plan.lines.map((l) => l.chains.hazihinam);
+  assert.equal(h[0].searchError, undefined);
+  assert.ok(h[0].product);
+  assert.equal(h[1].searchError, 'NETWORK');
+  assert.equal(h[1].product, null);
+  assert.deepEqual(h[1].results, []);
+  assert.equal(h[1].match, 'missing');
+  for (const code of ['SHAPE_CHANGED', 'NOT_LOGGED_IN', 'BLOCKED']) {
+    const e = makeEnv({ 'hazihinam.search': (args) => { if (args[0] === 'לחם') throw err(code); return [prod('hazihinam', '1', 'חלב', 6)]; } });
+    const p = await e.runner.buildPlan('חלב\nלחם', ['hazihinam']);
+    assert.equal(p.chainErrors.hazihinam.code, code);
+  }
 });
 
 test('finish saves runs (max 10), ownHistory, lastList; only allowed rpc methods', async () => {

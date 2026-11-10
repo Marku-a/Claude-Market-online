@@ -3,6 +3,7 @@
 import {
   AdapterError, createHttp, need, num, checkId, assertPageSafe, runDiagnose, lazyEnv,
 } from './http.js';
+import { CHAINS } from './registry.js';
 
 const ORIGIN = 'https://shop.hazi-hinam.co.il';
 const API = `${ORIGIN}/proxy/api`;
@@ -18,7 +19,7 @@ export const meta = {
   homeUrl: `${ORIGIN}/`,
   cartUrl: `${ORIGIN}/`, // cart page route is unknown (SITES.md): the home page has the cart icon
   loginUrl: `${ORIGIN}/`,
-  forbidden: [/\/checkout/i],
+  forbidden: CHAINS.hazihinam.forbidden, // single source of truth: registry.js
   cartHint: 'לחצו על סמל העגלה בראש האתר כדי לראות את העגלה',
 };
 
