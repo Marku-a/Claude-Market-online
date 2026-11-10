@@ -454,7 +454,8 @@ function drawResult(body) {
   put(body, 
     section('מבצעים ששווה לשקול', sg.deals.map((d) => `${CHAINS[d.chain].name}: ${d.name} — כדאי לקחת ${d.suggestedQty} (תוספת ${money(d.extraCost)}). ${d.description}`)),
     section('מוצרים שהתייקרו', sg.priceChanges.map((p) => `${CHAINS[p.chain].name}: ${p.name} — מ-${money(p.old)} ל-${money(p.new)} (${p.pct > 0 ? '+' : ''}${p.pct}%)`)),
-    section('אולי שכחת', [...sg.maybeForgot.map((m) => `${m.name} — ${m.reason}`), ...sg.goesWith.map((g) => `${g.name} — בדרך כלל קונים עם ${g.with}`)]));
+    section('אולי שכחת', [...sg.maybeForgot.map((m) => `${m.name} — ${m.reason}`),
+      ...sg.goesWith.filter((g) => !sg.maybeForgot.some((m) => m.name === g.name)).map((g) => `${g.name} — בדרך כלל קונים עם ${g.with}`)]));
   put(body, h('div', { class: 'actions' }, primary('קנייה חדשה', async () => {
     try { await closeWorkers(); } catch { /* ignore */ }
     S.plan = null; S.fillResults = null; S.final = null; S.policy = {}; S.listText = '';
