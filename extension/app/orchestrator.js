@@ -331,9 +331,13 @@ export function createRunner({ rpc, store, today, chains }) {
         if (l.enabled === false || !l.chains[chain]) return;
         const e = l.chains[chain];
         const miss = !e.product || failed.has(idx);
+        // Prefer the price the site itself charges for this line (after its own promotions).
+        const siteLine = !miss && fr.rawCart && Array.isArray(fr.rawCart.lines)
+          ? fr.rawCart.lines.find((x) => String(x.id) === String(e.product.id)) : null;
+        const siteTotal = siteLine && typeof siteLine.lineTotal === 'number' ? siteLine.lineTotal : null;
         lines.push({
           line: l.query, match: miss ? 'missing' : e.match, product: miss ? null : e.product,
-          qty: e.qty, lineTotal: miss ? 0 : e.lineTotal,
+          qty: e.qty, lineTotal: miss ? 0 : (siteTotal ?? e.lineTotal),
         });
       });
       chainRuns[chain] = { status: 'ok', lines, cart: fr.cart };

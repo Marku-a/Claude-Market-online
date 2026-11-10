@@ -253,7 +253,8 @@ function drawProgress(el, ids) {
 
 async function viewReview(box) {
   const ids = connected();
-  put(box, h('h2', { text: 'בדיקת הסל' }), h('p', { class: 'lead', text: 'מחפשים כל מוצר בכל אתר…' }));
+  const lead = h('p', { class: 'lead', text: 'מחפשים כל מוצר בכל אתר…' });
+  put(box, h('h2', { text: 'בדיקת הסל' }), lead);
   const prog = h('div');
   const body = h('div');
   put(box, prog, body);
@@ -272,6 +273,7 @@ async function viewReview(box) {
     return;
   }
   prog.replaceChildren();
+  lead.textContent = 'זה מה שנבחר בכל אתר. אפשר להחליף מוצר, לשנות כמות או להוריד שורה, ואז למלא את העגלות.';
   live('החיפוש הסתיים');
   drawReview(body);
 }
