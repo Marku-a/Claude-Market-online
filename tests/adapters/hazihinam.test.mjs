@@ -159,7 +159,7 @@ test('diagnose: structure only, UNSUPPORTED step reported with code', async () =
       ['checkLogin', true], ['search', true], ['getCart', true], ['getOrders', false], ['getDeliveryContext', true],
     ]);
     assert.equal(d[3].code, 'UNSUPPORTED');
-    assert.equal(d[1].shape.Results.Items[1], '<+2 more>');
+    assert.equal(d[1].shape.Results.Items[1], '<+1 more>');
     assert.equal(leaks(d, 'תנובה'), false);
   } finally {
     await mock.close();

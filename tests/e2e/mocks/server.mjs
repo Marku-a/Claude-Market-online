@@ -123,7 +123,11 @@ function readBody(req) {
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
-const matches = (name, q) => !q || String(name).toLowerCase().includes(String(q).toLowerCase());
+// like the real sites' search: every word of the query must appear in the name (any order)
+const matches = (name, q) => {
+  const n = String(name).toLowerCase();
+  return String(q || '').toLowerCase().split(/\s+/).filter(Boolean).every((w) => n.includes(w));
+};
 
 export function createMockSites(state = createState()) {
   const base = createState();
