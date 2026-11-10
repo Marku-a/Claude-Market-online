@@ -61,6 +61,8 @@ Known unknowns to resolve (see `docs/SITES.md`):
 npm test                 # engine + adapters + orchestrator
 npm run test:e2e         # real extension in Chromium vs mock sites (needs Playwright + Chromium)
 python3 -m unittest discover -s tests
+node tools/real-run.mjs        # real sites: visible Chromium + extension, profile in ~/.sal-hacham-profile (user's computer only)
+node tools/real-run.mjs diag   # run the diagnostics page and print the redacted report
 ```
 
 ## Layout
