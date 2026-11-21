@@ -1,5 +1,5 @@
 // Cross-chain matching, totals, personal discounts, recommendation (SPEC section 6).
-import { similarity, productKey } from './text.js';
+import { similarity, productKey, queryNumbers, hasAllNumbers } from './text.js';
 import { chooseForLine, lineCost } from './choose.js';
 
 const r2 = (x) => Math.round((x + Math.sign(x) * 1e-9) * 100) / 100;
@@ -11,12 +11,17 @@ const COMPARABLE = new Set(['identical', 'similar']);
 //      promoApplied, promoSaving, reasons, alternatives, missingReason}} }
 export function matchLine(parsedLine, resultsByChain, profile) {
   // 1. reference = profile favourite among all chains' results (highest orderCount, needs >= 1)
+  //    ...but only a favourite that does not contradict the line: it must carry every number the user wrote
+  //    ("5%", "12"). Otherwise "קוטג' 5%" became the usual 9% cottage and the real 5% elsewhere was badged
+  //    "different" (seen live, 2026-11-21). A plain "חלב" still means the usual milk.
+  const nums = queryNumbers(parsedLine.query);
+  const fitsQuery = (c) => hasAllNumbers(c.name, nums);
   let reference = null;
   let refCount = 0;
   for (const results of Object.values(resultsByChain)) {
     for (const c of results || []) {
       const p = profile.products[productKey(c)];
-      if (p && p.orderCount > refCount) {
+      if (p && p.orderCount > refCount && fitsQuery(c)) {
         reference = c;
         refCount = p.orderCount;
       }
@@ -145,7 +150,7 @@ export function summarize(chainRuns, profile) {
     let best = null;
     for (const c of okChains) {
       const e = l.chains[c];
-      if (e.match === 'missing') continue;
+      if (!COMPARABLE.has(e.match)) continue; // a 'different' product is not the same item - never "cheapest"
       if (!best || e.lineTotal < best.price) best = { line: l.line, chain: c, price: e.lineTotal };
     }
     if (best) perLineCheapest.push(best);

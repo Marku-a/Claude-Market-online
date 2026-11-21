@@ -433,14 +433,15 @@ function drawResult(body) {
   const okIds = Object.keys(summary.chains).filter((c) => summary.chains[c].status === 'ok');
   const head = h('tr', null, h('th', { scope: 'col', text: 'מוצר' }), okIds.map((c) => h('th', { scope: 'col', text: CHAINS[c].name })));
   const rows = summary.lines.map((l) => {
-    const prices = okIds.filter((c) => l.chains[c].match !== 'missing').map((c) => l.chains[c].lineTotal);
+    const comparable = (m) => m === 'identical' || m === 'similar'; // 'different' never competes for cheapest
+    const prices = okIds.filter((c) => comparable(l.chains[c].match)).map((c) => l.chains[c].lineTotal);
     const min = prices.length ? Math.min(...prices) : null;
     return h('tr', null, h('th', { scope: 'row', text: l.line }), okIds.map((c) => {
       const e = l.chains[c];
       const td = h('td');
       if (e.product) put(td, h('div', { text: e.product.name }), h('div', null, num(e.lineTotal)));
       put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
-      if (e.match !== 'missing' && e.lineTotal === min && okIds.length > 1) put(td, ' ', h('span', { class: 'cheapest', text: 'הזול ביותר' }));
+      if (comparable(e.match) && e.lineTotal === min && prices.length > 1) put(td, ' ', h('span', { class: 'cheapest', text: 'הזול ביותר' }));
       return td;
     }));
   });

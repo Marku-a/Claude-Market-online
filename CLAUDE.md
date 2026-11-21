@@ -18,9 +18,10 @@ every sentence true).
 - Regular Chrome (unpacked, user's own profile): the user ran the same list on 2026-11-21 and reports the result page
   showed totals for all three chains (user-reported; not observed by Claude).
 - Not yet verified: Hatzi Hinam `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
-- Known product-matching weakness (engine, not adapters): with no barcode match, `chooseForLine` can pick an
-  unrelated product by name (Rami Levy "אטריות ביצים" for "ביצים L 12"); it is badged "שונה" but still counted and can
-  win "cheapest". Next engine task.
+- Product matching (engine) was fixed after a live run on 2026-11-21: Rami Levy had picked "אטריות ביצים" for
+  "ביצים L 12" and the usual 9% cottage overrode "קוטג' 5%". Now only results close to the query compete, numbers the
+  user wrote ("12", "5%") win over habit, and a "שונה" product never gets "הזול ביותר". Matching is still by name
+  when barcodes differ — the review screen is where the user confirms choices.
 
 ## Working with the live sites (on the user's computer)
 

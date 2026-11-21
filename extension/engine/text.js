@@ -47,3 +47,12 @@ export function parseListLine(line) {
 export function productKey(p) {
   return p && p.barcode ? String(p.barcode) : normalize(p && p.name);
 }
+
+// Numbers the user wrote in a list line ("5%", "12"). A product "fits" when its name carries all of them.
+export function queryNumbers(query) {
+  return normalize(query).split(' ').filter((t) => /[0-9]/.test(t));
+}
+export function hasAllNumbers(name, nums) {
+  const tokens = new Set(normalize(name).split(' '));
+  return nums.every((n) => tokens.has(n));
+}

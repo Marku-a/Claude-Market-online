@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildProfile } from '../../extension/engine/profile.js';
 import { matchLine, applyDiscounts, summarize, recommend } from '../../extension/engine/compare.js';
 import { parseListLine } from '../../extension/engine/text.js';
+import { chooseForLine } from '../../extension/engine/choose.js';
 import { TODAY, order, cand, MILK } from './helpers.mjs';
 
 const hist = (n = 3) => Array.from({ length: n }, (_, i) =>
@@ -244,4 +245,48 @@ _t2('recommend: an empty cart or one below the minimum order never wins', () => 
   _a2.equal(r.ranking[0].chain, 'a');
   summary.chains.a.belowMinimum = true;
   _a2.equal(_rec(summary).best, null);
+});
+
+describe('real-site regressions (2026-11-21)', () => {
+  // Rami Levy's real top results for "ביצים L 12": the eggs are first, cheaper unrelated hits follow.
+  const RL_EGGS = [
+    ['425667', 'ביצים 12 יח גדול L', 14.5], ['425668', 'ביצים 12 יח בינוני M', 13.4],
+    ['5523', 'אטריות ביצים בינוניות מספר 12 אוריינט 200 גרם', 8.8], ['328225', "אטריות ביצים פטוצ'יני", 10.8],
+    ['356183', 'אטריות ביצים דקות 400ג רמילוי', 8], ['356184', 'אטריות ביצים רחבות 400ג רמילוי', 8],
+    ['248816', 'אטריות ביצים רצועות 500 גר', 9.8], ['321227', 'כפפות משק מידה L', 5.9],
+    ['307029', 'כפפות ניטריל כחולות רפואיות L', 29.6], ['410808', 'מאסטר שף אטריות ביצים עבות 340 גרם', 10],
+  ].map(([id, name, price]) => cand(id, name, price, { chain: 'ramilevy' }));
+
+  test('cheap unrelated results do not beat the product the query names', () => {
+    const ch = chooseForLine(L('ביצים L 12'), RL_EGGS, buildProfile([], TODAY));
+    assert.equal(ch.product.name, 'ביצים 12 יח גדול L');
+    assert.ok(ch.ranked.every((p) => !/אטריות|כפפות/.test(p.name)), 'unrelated hits are not even candidates');
+  });
+
+  test('a usual product that contradicts a number in the line is not the reference', () => {
+    const usual = ['c9', "קוטג' 9%", 'תנובה', 'מוצרי חלב'];
+    const p = buildProfile([order('1', '2026-10-01', [...usual, 1, 6.1]), order('2', '2026-10-08', [...usual, 1, 6.1])], TODAY);
+    const m = matchLine(L("קוטג' 5%"), {
+      hazihinam: [cand('c9', "קוטג' 9%", 6.1), cand('c5', "קוטג' 5%", 5.5)],
+      ramilevy: [cand('r5', "קוטג' תנובה 5% שומן 250 ג'", 5.9, { chain: 'ramilevy' })],
+    }, p);
+    assert.equal(m.reference, null);
+    assert.equal(m.chains.hazihinam.product.name, "קוטג' 5%");
+    assert.equal(m.chains.ramilevy.match, 'similar');
+    // a plain line still uses the usual product
+    assert.equal(matchLine(L('קוטג'), { hazihinam: [cand('c9', "קוטג' 9%", 6.1), cand('c5', "קוטג' 5%", 5.5)] }, p).chains.hazihinam.product.name, "קוטג' 9%");
+  });
+
+  test('numbers in the line beat habit inside one chain', () => {
+    const usual = ['e18', 'מארז 18 ביצים L', null, 'ביצים'];
+    const p = buildProfile([order('1', '2026-10-01', [...usual, 1, 21.7]), order('2', '2026-10-08', [...usual, 1, 21.7])], TODAY);
+    const res = [cand('e12', 'מארז 12 ביצים L', 14.5), cand('e18', 'מארז 18 ביצים L', 21.7), cand('o12', 'מארז 12 ביצים אורגניות L', 27.3)];
+    assert.equal(chooseForLine(L('ביצים L 12'), res, p).product.name, 'מארז 12 ביצים L');
+    assert.equal(chooseForLine(L('ביצים'), res, p).product.name, 'מארז 18 ביצים L'); // no number: the usual one
+  });
+
+  test("a 'different' product is never the line's cheapest", () => {
+    const s = summarize({ hazihinam: run([['identical', 21.7]]), ramilevy: run([['different', 8]]), shufersal: run([['similar', 21.81]]) }, {});
+    assert.deepEqual(s.perLineCheapest.map((x) => x.chain), ['hazihinam']);
+  });
 });

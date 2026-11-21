@@ -1,9 +1,11 @@
 // Per-chain product choice, promo math, suggestions. Pure, browser-compatible.
-import { similarity, productKey } from './text.js';
+import { similarity, productKey, queryNumbers, hasAllNumbers } from './text.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const hasUnit = (c) => isNum(c.unitPrice) && c.unitPrice > 0;
 const r2 = (x) => Math.round((x + Math.sign(x) * 1e-9) * 100) / 100;
+// A candidate must reach this share of the best name similarity in the results to be considered.
+export const RELEVANCE_SHARE = 0.5;
 
 // A promo counts only when it beats the regular price by >= 5% per unit. Ignored for kg items.
 export function promoWorth(product) {
@@ -53,10 +55,21 @@ export function chooseForLine(parsedLine, results, profile) {
       alternatives: [], missingReason, ranked: [],
     };
   }
-  const useUnit = stock.every(hasUnit);
+  // Relevance gate: only products whose name is reasonably close to the query compete, and the price rank is
+  // computed among them only. Without it, cheap unrelated hits ("אטריות ביצים", "כפפות L" for "ביצים L 12")
+  // pushed the real product down by -2 per cheaper result (seen on Rami Levy, 2026-11-21).
+  const rel = (c) => similarity(parsedLine.query, c.name);
+  const maxRel = Math.max(...stock.map(rel));
+  let pool = maxRel > 0 ? stock.filter((c) => rel(c) >= maxRel * RELEVANCE_SHARE) : stock;
+  // Numbers the user wrote ("12", "5%") win over habit: when some candidates carry them, only those compete
+  // (Hatzi Hinam offered the usual 18-pack for "ביצים L 12" although a 12-pack was listed).
+  const nums = queryNumbers(parsedLine.query);
+  const exact = pool.filter((c) => hasAllNumbers(c.name, nums));
+  if (nums.length && exact.length) pool = exact;
+  const useUnit = pool.every(hasUnit);
   const cmpOf = (c) => (useUnit ? c.unitPrice : c.price);
-  const cmpVals = stock.map(cmpOf);
-  const scored = stock.map((c) => {
+  const cmpVals = pool.map(cmpOf);
+  const scored = pool.map((c) => {
     const p = profile.products[productKey(c)];
     const top = topBrand(profile, c.category || (p && p.category));
     const rank = cmpVals.filter((v) => v < cmpOf(c)).length;
