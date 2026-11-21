@@ -10,39 +10,25 @@ every sentence true).
 
 ## Current state (important)
 
-- Built and tested **only against mock sites** (`tests/e2e/mocks/server.mjs`). All three real sites block cloud
-  servers, so **no adapter has ever run against a real site**. Treat every endpoint in `docs/SITES.md` marked
-  [P] or [?] as unverified, and even [V] ones as "seen in someone else's capture".
-- Passing: `npm test` (182 unit tests), `npm run test:e2e` (11 Playwright tests, real extension in Chromium,
-  site hostnames mapped to the local mock), `python3 -m unittest discover -s tests` (the older Claude-skill engine).
-- The goal is not done until the extension has filled a real cart on each of the three real sites and the
-  result page shows site totals and working cart links.
+- **Calibrated against the three live sites on 2026-11-20/21** (user's Windows machine, logged-in account). All 15
+  diagnostics steps pass. A 2-item and a 3-item list ran through the extension UI with policy "keep": each site's own
+  cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
+  verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
+- Passing: `npm test` (193), `npm run test:e2e` (11), mocks and fixtures follow the real response shapes.
+- Not yet verified: the extension in the user's regular Chrome (only Playwright's Chromium so far); Hatzi Hinam
+  `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
+- Known product-matching weakness (engine, not adapters): with no barcode match, `chooseForLine` can pick an
+  unrelated product by name (Rami Levy "אטריות ביצים" for "ביצים L 12"); it is badged "שונה" but still counted and can
+  win "cheapest". Next engine task.
 
-## Next task: calibrate against the real sites (must run on the user's computer)
+## Working with the live sites (on the user's computer)
 
-Work one chain at a time: Shufersal (best documented) → Rami Levy → Hatzi Hinam (least documented).
-
-1. Load `extension/` unpacked in the user's Chrome (`chrome://extensions` → Developer mode → Load unpacked).
-   The user logs in to each site themselves. Never ask for, type, or read a password, OTP or card.
-2. Open the extension → footer link **אבחון** → "הרץ אבחון". The report shows, per chain, each adapter step
-   (checkLogin, search, getCart, getOrders, getDeliveryContext) with ok / error code / redacted response shape.
-3. For every failing step, compare the redacted shape with what the adapter's parse function expects
-   (`extension/sites/<chain>.js`), fix the adapter, **update the fixture and mock to the real shape**
-   (`tests/adapters/fixtures/`, `tests/e2e/mocks/server.mjs`), add/adjust a test, re-run the diagnostics.
-   If the shape isn't enough, look at the site's own network calls in DevTools (Network tab) for that action —
-   read request URL/method/body shape only; do not copy cookies, tokens or personal data into files or chat.
-4. Then run a real 2–3 item list end to end with policy "להשאיר ולהוסיף", and check on each site's own cart page
-   that the items and quantities match and that the total on the result page equals the site's total.
-5. Update `docs/SITES.md` confidence tags ([V] = verified by us, with date) and `docs/INSTALL.md` known limits.
-
-Known unknowns to resolve (see `docs/SITES.md`):
-- **Rami Levy**: where the `ecomtoken` value lives (adapter assumes it equals `authuser.user.token`); whether a
-  cart written through `/api/v2/cart` shows up in the site's cart panel after reload; order-lines endpoint;
-  whether catalog/cart live on `www` or `www-api`.
-- **Shufersal**: `/cart/update` body format (form vs JSON); delivery-slot response shape; whether a delivery
-  address must be selected before products show in stock.
-- **Hatzi Hinam**: logged-in detection (`UserInfo`); whether `addItemToCart` sets or increments; endpoints for
-  remove / set quantity / empty cart and for order history; the cart page URL.
+- `SAL_CDP_PORT=9333 node tools/real-run.mjs` opens the window; `... diag` attaches to it; `... reload` reloads the
+  extension from disk **without restarting the browser** (a restart logs Shufersal out — session cookie).
+- On this Windows machine Playwright's Chromium only starts from outside `AppData\Local`: use
+  `PLAYWRIGHT_BROWSERS_PATH=~/.sal-pw-browsers`.
+- Never pick a delivery slot (Rami Levy opens a slot modal after the first UI add — close it), never open checkout.
+- Before emptying a cart that holds the user's own items, ask.
 
 ## Rules that must never be broken
 

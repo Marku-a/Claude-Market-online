@@ -335,7 +335,6 @@ function drawReview(body) {
     for (const c of withCart) {
       const def = S.profile && S.profile.existingCartPolicy === 'empty' ? 'empty' : 'keep';
       S.policy[c] ||= def;
-      const unsupported = c === 'hazihinam';
       const radio = (val, text) => {
         const id = `pol-${c}-${val}`;
         const r = h('input', { type: 'radio', name: 'pol-' + c, id, value: val, checked: S.policy[c] === val, 'data-testid': `policy-${c}-${val}` });
@@ -343,8 +342,7 @@ function drawReview(body) {
         return h('div', null, r, ' ', h('label', { for: id, class: 'inline', text }));
       };
       put(body, h('fieldset', null, h('legend', { text: `${CHAINS[c].name}: ${S.carts[c].lines.length} מוצרים בעגלה` }),
-        radio('empty', 'לרוקן את העגלה הקיימת'), radio('keep', 'להשאיר ולהוסיף'),
-        unsupported ? h('p', { class: 'note', text: 'ריקון עגלה עדיין לא נתמך בחצי חינם. אם בחרתם לרוקן, יש לעשות זאת באתר עצמו.' }) : null));
+        radio('empty', 'לרוקן את העגלה הקיימת'), radio('keep', 'להשאיר ולהוסיף')));
     }
   }
   put(body, h('div', { class: 'actions' },
