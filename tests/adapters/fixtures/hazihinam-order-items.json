@@ -1,0 +1,6 @@
+{"IsOK":true,"ErrorResponse":null,"Results":{"OrderItems":{"OrderId":5101,"Date":"03/09/2026","Categories":[
+{"Id":3,"Name":"מוצרי חלב","ItemsCount":2,"Items":[
+{"Id":7357,"BarKod":7290000000012,"Name":"חלב תנובה 3% 1 ליטר","ManufacturerName":"תנובה","CategoryName":"מוצרי חלב","IsShakil":false,"Price_NET":6.2,"Calculated_Price_NET":0,"Cart":null},
+{"Id":7358,"Name":"עגבניות שרי","ManufacturerName":null,"CategoryName":null,"IsShakil":true,"Price_NET":12.9,"Calculated_Price_NET":0,"Cart":null}
+]}
+]}}}

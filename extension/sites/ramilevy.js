@@ -65,7 +65,9 @@ export function parseSearch(json, ctx = {}) {
 // Customer endpoint -> { items: {id: qty}, deliveryFee, storeId }
 export function parseCustomer(json) {
   need(json, 'user', 'object');
-  const cart = need(json, 'cart', 'object');
+  // Real site (verified 2026-11-20): `cart` is null until the first item is added; then {uid, items:{id:qty}, ...}.
+  if (!('cart' in json)) throw new AdapterError('SHAPE_CHANGED', 'missing field: cart');
+  const cart = json.cart === null ? { items: {} } : need(json, 'cart', 'object');
   let items = cart.items;
   if (items == null || (Array.isArray(items) && items.length === 0)) items = {};
   if (typeof items !== 'object' || Array.isArray(items)) {
@@ -96,6 +98,61 @@ export function parseCart(json, fallbackFee = null) {
   }
   const deliveryFee = fee ?? fallbackFee ?? null;
   return { lines, itemsTotal, deliveryFee, grandTotal: itemsTotal + (deliveryFee || 0), minOrder: null };
+}
+
+// Order list -> [{ id, date }] newest first. Only id and date are kept (no personal fields).
+// Real shape (verified 2026-11-20): data.data.data = [{id, supply_at 'YYYY-MM-DD hh:mm:ss', created_at ISO, items, ...}]
+export function parseOrderList(json) {
+  const rows = need(json, 'data.data.data', 'array');
+  const out = [];
+  for (const o of rows) {
+    if (!o || typeof o !== 'object' || o.id == null) continue;
+    let date = null;
+    for (const v of [o.supply_at, o.created_at]) {
+      if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) { date = v.slice(0, 10); break; }
+    }
+    if (!date) continue;
+    out.push({ id: o.id, date });
+  }
+  return out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
+// Catalog items (/api/items) -> Map item_id -> { barcode, brand, category }
+export function parseItemsInfo(json) {
+  const map = new Map();
+  for (const it of need(json, 'data', 'array')) {
+    if (!it || typeof it !== 'object' || it.id == null) continue;
+    map.set(String(it.id), {
+      barcode: it.barcode != null && it.barcode !== '' ? String(it.barcode) : null,
+      brand: (it.gs && it.gs.BrandName) || null,
+      category: (it.department && it.department.name) || null,
+    });
+  }
+  return map;
+}
+
+// Order detail -> Order. barcodeMap: Map|object item_id -> {barcode, brand, category}. The delivery line is skipped.
+export function parseOrderDetail(json, id, date, barcodeMap = null) {
+  const lines = need(json, 'data.lines', 'array');
+  const deliveryId = json.data.delivery_item_id;
+  const info = (k) => (barcodeMap instanceof Map ? barcodeMap.get(k) : barcodeMap && barcodeMap[k]) || null;
+  const items = [];
+  for (const l of lines) {
+    if (!l || typeof l !== 'object' || l.item_id == null) continue;
+    if (deliveryId != null && String(l.item_id) === String(deliveryId)) continue;
+    const k = String(l.item_id);
+    const i = info(k);
+    items.push({
+      id: k,
+      barcode: (i && i.barcode) || null,
+      name: String(l.name ?? ''),
+      brand: (i && i.brand) || null,
+      category: (i && i.category) || null,
+      qty: num(l.quantity) ?? 0,
+      price: num(l.price) ?? 0,
+    });
+  }
+  return { chain: meta.id, id: String(id), date, items };
 }
 
 // ---------- adapter ----------
@@ -148,10 +205,14 @@ export function createAdapter(env) {
     return { token: u.token, uid: u.id, store: c.store };
   }
 
-  async function priceCart(u, store, items) {
+  // persist=false omits `ecomtoken`: the site then only prices the map and the stored cart is untouched
+  // (verified 2026-11-20). Reads must never write.
+  async function priceCart(u, store, items, { persist = true } = {}) {
+    const h = headers(u);
+    if (!persist) delete h.ecomtoken;
     return http.postJson(`${ORIGIN}/api/v2/cart`, {
       store: Number(store), isClub: 0, supplyAt: now().toISOString(), items, meta: null,
-    }, { headers: headers(u) });
+    }, { headers: h });
   }
 
   const adapter = {
@@ -168,18 +229,40 @@ export function createAdapter(env) {
 
     async getDeliveryContext() {
       assertPageSafe(meta, env);
-      const c = await customer(requireAuth());
-      return { addressLabel: null, storeLabel: String(c.store), deliveryFee: c.deliveryFee, minOrder: null };
+      const u = requireAuth();
+      const c = await customer(u);
+      let fee = c.deliveryFee;
+      // deliveryTimesCustomer is null until a slot is chosen; the fee then exists only as the cart's
+      // is_delivery line, and only for a non-empty cart.
+      if (fee === null && Object.keys(c.items).length) {
+        fee = parseCart(await priceCart(u, c.store, c.items, { persist: false }), null).deliveryFee;
+      }
+      return { addressLabel: null, storeLabel: String(c.store), deliveryFee: fee, minOrder: null };
     },
 
-    async getOrders() {
+    async getOrders(limit = 10) {
       assertPageSafe(meta, env);
       const u = requireAuth();
-      const json = await http.getJson(`${API}/api/v3/site/orders?page=1&activeFilter=`, { headers: headers(u) });
-      need(json, 'data.data.data', 'array');
-      // Order lines endpoint is unknown (SITES.md) - headers only, never guessed.
-      adapter.lastNote = 'ORDER_LINES_UNKNOWN';
-      return [];
+      const list = parseOrderList(await http.getJson(`${API}/api/v3/site/orders?page=1&activeFilter=0`, { headers: headers(u) }))
+        .slice(0, Math.max(0, Number(limit) || 0));
+      const out = [];
+      for (const o of list) {
+        const id = checkId(o.id, ID_RE, 'order id');
+        const detail = await http.getJson(`${API}/api/v3/site/orders/${id}`, { headers: headers(u) });
+        const order = parseOrderDetail(detail, id, o.date, null);
+        const ids = [...new Set(order.items.map((i) => i.id))].filter((x) => ID_RE.test(x));
+        let map = null;
+        if (ids.length) {
+          try {
+            map = parseItemsInfo(await http.postJson(`${ORIGIN}/api/items`,
+              { ids: ids.join(','), type: 'id' }, { headers: headers(u) }));
+          } catch {
+            map = null; // barcodes are optional: continue without them
+          }
+        }
+        out.push(map ? parseOrderDetail(detail, id, o.date, map) : order);
+      }
+      return out;
     },
 
     async search(query) {
@@ -198,7 +281,7 @@ export function createAdapter(env) {
       if (!Object.keys(c.items).length) {
         return { lines: [], itemsTotal: 0, deliveryFee: c.deliveryFee, grandTotal: c.deliveryFee || 0, minOrder: null };
       }
-      return parseCart(await priceCart(u, c.store, c.items), c.deliveryFee);
+      return parseCart(await priceCart(u, c.store, c.items, { persist: false }), c.deliveryFee);
     },
 
     // Replace semantics: POST the whole map so other items are preserved.
@@ -209,7 +292,9 @@ export function createAdapter(env) {
       if (!Number.isFinite(q) || q < 0) throw new AdapterError('UNSUPPORTED', 'invalid quantity');
       const u = requireAuth();
       const c = await customer(u);
-      const items = { ...c.items };
+      // The server returns quantities as numbers; the site writes them back as "1.00" strings — do the same.
+      const items = {};
+      for (const [k, v] of Object.entries(c.items)) if (num(v) !== null) items[k] = num(v).toFixed(2);
       if (q > 0) items[id] = q.toFixed(2);
       else delete items[id];
       const res = await priceCart(u, c.store, items);

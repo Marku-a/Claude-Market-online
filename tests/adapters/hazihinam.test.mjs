@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import adapterDefault, {
-  createAdapter, parseSearch, parseCart, parseSummary, unwrap,
+  createAdapter, parseSearch, parseCart, parseSummary, unwrap, parseCartLines, parseOrderHistory, parseOrderLines,
 } from '../../extension/sites/hazihinam.js';
 import { fixture, startMock, makeEnv, leaks } from './helpers.mjs';
 
@@ -54,25 +54,50 @@ test('parseCart / parseSummary', () => {
   assert.throws(() => parseCart({ Results: {} }, {}), (e) => e.code === 'SHAPE_CHANGED');
 });
 
+test('parseCartLines: Items null = empty cart; other shapes still SHAPE_CHANGED', () => {
+  assert.deepEqual(parseCartLines({ IsOK: true, Results: { CartItemsCount: 0, CartItems: { Items: null } } }), []);
+  assert.deepEqual(parseCartLines({ Results: { CartItems: { Items: [] } } }), []);
+  for (const bad of [{ Results: {} }, { Results: { CartItems: null } }, { Results: { CartItems: {} } },
+    { Results: { CartItems: { Items: 'x' } } }, { Results: { CartItems: { Items: {} } } }]) {
+    assert.throws(() => parseCartLines(bad), (e) => e.code === 'SHAPE_CHANGED');
+  }
+});
+
+test('parseOrderHistory / parseOrderLines: drafts and bad dates skipped, newest first, qty null', () => {
+  assert.deepEqual(parseOrderHistory(fixture('hazihinam-order-history.json')), [
+    { id: '5103', date: '2026-10-21' }, { id: '5101', date: '2026-09-03' },
+  ]);
+  assert.throws(() => parseOrderHistory({ Results: {} }), (e) => e.code === 'SHAPE_CHANGED');
+  const o = parseOrderLines(fixture('hazihinam-order-items.json'), '5101', '2026-09-03');
+  assert.deepEqual(o, {
+    chain: 'hazihinam', id: '5101', date: '2026-09-03',
+    items: [
+      { id: '7357', barcode: '7290000000012', name: 'חלב תנובה 3% 1 ליטר', brand: 'תנובה', category: 'מוצרי חלב', qty: null, price: 6.2 },
+      { id: '7358', barcode: null, name: 'עגבניות שרי', brand: null, category: null, qty: null, price: 12.9 },
+    ],
+  });
+  assert.throws(() => parseOrderLines({ Results: {} }, '1', '2026-01-01'), (e) => e.code === 'SHAPE_CHANGED');
+});
+
 async function setup(mutate) {
   const mock = await startMock();
   if (mutate) mutate(mock.state);
   return { mock, a: createAdapter(makeEnv(mock)), state: mock.state };
 }
 
-test('full flow (set semantics): login, search, add, raise, cart, UNSUPPORTED paths', async () => {
-  const { mock, a, state } = await setup((s) => { s.hazihinam.addIncrements = false; });
+test('full flow (set semantics): login, search, add, raise, decrease, remove, cart', async () => {
+  const { mock, a, state } = await setup();
   try {
     assert.deepEqual(await a.checkLogin(), { loggedIn: true, userLabel: 'דנה' });
     const found = await a.search('חלב');
     assert.deepEqual(found.map((p) => p.id), ['7357', '7359']);
+    const adds = () => state.requests.filter((r) => r.path.endsWith('/addItemToCart')).length;
 
     assert.deepEqual(await a.setItem('7357', 2, found[0]), { ok: true, qty: 2 });
     assert.deepEqual(await a.setItem('7357', 2, found[0]), { ok: true, qty: 2 }); // no request needed
-    assert.deepEqual(await a.setItem('7357', 4, found[0]), { ok: true, qty: 4 }); // site sets
-    assert.equal(state.hazihinam.cart[7357], 4);
+    assert.deepEqual(await a.setItem('7357', 4, found[0]), { ok: true, qty: 4 });
     assert.deepEqual(await a.setItem('7358', 0.5, { soldBy: 'kg' }), { ok: true, qty: 0.5 });
-    assert.equal(state.requests.filter((r) => r.path.endsWith('/addItemToCart')).length, 3);
+    assert.equal(adds(), 3);
 
     const cart = await a.getCart();
     assert.equal(cart.lines.length, 2);
@@ -82,30 +107,74 @@ test('full flow (set semantics): login, search, add, raise, cart, UNSUPPORTED pa
     assert.equal(cart.minOrder, 150);
     assert.deepEqual(await a.getDeliveryContext(), { addressLabel: null, storeLabel: null, deliveryFee: 25, minOrder: 150 });
 
-    // decrease / remove / empty / orders are UNSUPPORTED and do not write
-    const writes = () => state.requests.filter((r) => r.method === 'POST').length;
-    const before = writes();
-    await assert.rejects(() => a.setItem('7357', 1, found[0]), (e) => e.code === 'UNSUPPORTED' && /בחצי חינם/.test(e.message));
-    await assert.rejects(() => a.setItem('7357', 0, found[0]), (e) => e.code === 'UNSUPPORTED');
-    await assert.rejects(() => a.emptyCart(), (e) => e.code === 'UNSUPPORTED');
-    await assert.rejects(() => a.getOrders(1), (e) => e.code === 'UNSUPPORTED');
-    assert.equal(writes(), before);
+    // decrease and remove are real now (set semantics, 0 removes)
+    assert.deepEqual(await a.setItem('7357', 1, found[0]), { ok: true, qty: 1 });
+    assert.equal(state.hazihinam.cart[7357], 1);
+    assert.deepEqual(await a.setItem('7357', 0, found[0]), { ok: true, qty: 0 });
+    assert.equal(7357 in state.hazihinam.cart, false);
+    assert.equal(adds(), 5);
     assert.deepEqual(await a.setItem('9999', 0), { ok: true, qty: 0 }); // not in cart, 0 = no-op
+    assert.equal(adds(), 5);
     assert.deepEqual(state.forbiddenHits, []);
   } finally {
     await mock.close();
   }
 });
 
-test('addIncrements=true: first add is exact, repeat add overshoots and is reported honestly', async () => {
-  const { mock, a, state } = await setup((s) => { s.hazihinam.addIncrements = true; });
+test('empty cart reads as no lines (Items null) and emptyCart uses DELETE removeItemsInCart', async () => {
+  const { mock, a, state } = await setup();
   try {
-    assert.deepEqual(await a.setItem('7357', 2), { ok: true, qty: 2 });
-    // current 2, wants 3: sends Quantity 3, site increments to 5 -> cannot decrease
-    assert.deepEqual(await a.setItem('7357', 3), { ok: false, qty: 5, code: 'UNSUPPORTED' });
-    assert.equal(state.hazihinam.cart[7357], 5);
-    // the real quantity is visible in the cart
-    assert.equal((await a.getCart()).lines[0].qty, 5);
+    assert.deepEqual((await a.getCart()).lines, []);
+    await a.setItem('7357', 2);
+    await a.setItem('7358', 1, { soldBy: 'kg' });
+    assert.deepEqual(await a.emptyCart(), { ok: true });
+    assert.deepEqual(state.hazihinam.cart, {});
+    const del = state.requests.filter((r) => r.method === 'DELETE');
+    assert.deepEqual(del.map((r) => r.path), ['/proxy/api/item/removeItemsInCart']);
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('checkLogin label: first word of FName', async () => {
+  const { mock, a, state } = await setup();
+  try {
+    assert.deepEqual(await a.checkLogin(), { loggedIn: true, userLabel: 'דנה' });
+    assert.equal(state.hazihinam.loggedIn, true);
+  } finally {
+    await mock.close();
+  }
+  const fake = { fetch: async () => ({ status: 200, ok: true, headers: { get: () => null },
+    text: async () => JSON.stringify({ IsOK: true, Results: { UserInfo: { FName: 'דנה לוי' } } }) }) };
+  assert.deepEqual(await createAdapter(fake).checkLogin(), { loggedIn: true, userLabel: 'דנה' });
+});
+
+test('getOrders: draft skipped, dates converted, newest first, qty null, limit', async () => {
+  const { mock, a, state } = await setup();
+  try {
+    const orders = await a.getOrders();
+    assert.deepEqual(orders.map((o) => [o.id, o.date]), [['5103', '2026-10-21'], ['5101', '2026-09-03']]);
+    assert.equal(orders[1].items.length, 2);
+    assert.ok(orders.every((o) => o.chain === 'hazihinam' && o.items.every((i) => i.qty === null)));
+    assert.equal(orders[0].items[0].category, 'כללי');
+    assert.equal(state.requests.some((r) => r.path.endsWith('/getItemsByOrder/5102')), false); // draft never fetched
+    assert.equal((await a.getOrders(1)).length, 1);
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('getOrders: hostile non-numeric order Id is never put in a URL', async () => {
+  const { mock, a, state } = await setup((s) => {
+    s.hazihinam.orders = [{ Id: '../../checkout', Date: '01/01/2026', IsDraftOrder: false, itemIds: [] },
+      { Id: '12/../x', Date: '02/01/2026', IsDraftOrder: false, itemIds: [] }];
+  });
+  try {
+    await assert.rejects(() => a.getOrders(), (e) => e.code === 'FORBIDDEN');
+    assert.equal(state.requests.some((r) => r.path.includes('getItemsByOrder')), false);
+    assert.deepEqual(state.forbiddenHits, []);
   } finally {
     await mock.close();
   }
@@ -151,14 +220,13 @@ test('ids must be digits: tampered ids are FORBIDDEN before any request', async 
   }
 });
 
-test('diagnose: structure only, UNSUPPORTED step reported with code', async () => {
+test('diagnose: structure only, every step ok', async () => {
   const { mock, a } = await setup();
   try {
     const d = await a.diagnose();
     assert.deepEqual(d.map((s) => [s.step, s.ok]), [
-      ['checkLogin', true], ['search', true], ['getCart', true], ['getOrders', false], ['getDeliveryContext', true],
+      ['checkLogin', true], ['search', true], ['getCart', true], ['getOrders', true], ['getDeliveryContext', true],
     ]);
-    assert.equal(d[3].code, 'UNSUPPORTED');
     assert.equal(d[1].shape.Results.Items[1], '<+1 more>');
     assert.equal(leaks(d, 'תנובה'), false);
   } finally {

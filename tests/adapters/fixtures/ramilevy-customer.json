@@ -1,1 +1,1 @@
-{"user":{"id":4242,"store_id":331,"first_name":"דנה"},"deliveryTimesCustomer":{"store_id":331,"price":29.9},"cart":{"items":{"425127":"1.00","100001":"2.00"}}}
+{"user":{"id":4242,"store_id":"331","first_name":"דנה"},"deliveryTimesCustomer":null,"orderTokens":[],"order":null,"cart":{"uid":4242,"updated_at":"2026-11-20 12:00:00","last_update":1795177960,"items":{"100001":2,"425127":1}},"shopLists":[]}

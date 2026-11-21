@@ -93,6 +93,8 @@ test('full flow: login, search, add/change/remove, cart totals + fee, empty, ord
     // add (ordering: the mock rejects add before load with 400, and POST without CSRF with 403)
     assert.deepEqual(await a.setItem('P_522319', 2, found[0]), { ok: true, qty: 2 });
     assert.deepEqual(state.shufersal.cart, [{ code: 'P_522319', qty: 2 }]);
+    // real site rejects raw brackets in the query with 400 (verified 2026-11-20); they must be %5B/%5D
+    assert.ok(state.requests.every((r) => !/[[\]]/.test(r.raw)), 'no raw [ ] in any request URL');
     const firstLoad = state.requests.findIndex((r) => r.path.endsWith('/cart/load'));
     const firstAdd = state.requests.findIndex((r) => r.path.endsWith('/cart/add'));
     assert.ok(firstLoad >= 0 && firstLoad < firstAdd, 'cart/load before cart/add');
@@ -239,6 +241,18 @@ test('token-like values never leak; diagnose gives structure only', async () => 
     assert.equal(cartShape.selectorsFound['.miglog-cart-summary-totalprice'], 1); // last response of getCart = cartsummary
     assert.match(cartShape.html, /^<string:\d+>$/);
     assert.equal(d[3].shape.entries[0].product.code, '<string:8>'); // last response = order detail
+  } finally {
+    await mock.close();
+  }
+});
+
+test('login status endpoint says false while logged in -> orders fallback says logged in', async () => {
+  const { mock, a, state } = await setup();
+  try {
+    state.shufersal.statusFalse = true;
+    assert.deepEqual(await a.checkLogin(), { loggedIn: true });
+    state.shufersal.loggedIn = false;
+    assert.deepEqual(await a.checkLogin(), { loggedIn: false });
   } finally {
     await mock.close();
   }

@@ -83,7 +83,13 @@ export function createHttp(chain, fetchImpl = (...a) => globalThis.fetch(...a), 
     const timer = setTimeout(() => ctl.abort(), timeoutMs);
     try {
       // Redirects are never followed (a redirect could lead to a payment page): 'manual'.
-      res = await safeFetch(url, { method, headers, body, credentials: 'include', redirect: 'manual', signal: ctl.signal });
+      // Cookies go only to the chain's own origin. API origins (Rami Levy's www-api) authorise by header and
+      // reject credentialed CORS ("Failed to fetch" — verified 2026-11-20), so they get credentials: 'omit'.
+      let sameOrigin = false;
+      try { sameOrigin = new URL(url).origin === chain.origin; } catch { /* safeFetch rejects bad URLs */ }
+      res = await safeFetch(url, {
+        method, headers, body, credentials: sameOrigin ? 'include' : 'omit', redirect: 'manual', signal: ctl.signal,
+      });
       if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
         throw new AdapterError('REDIRECT', 'redirect');
       }
@@ -133,6 +139,9 @@ export function createHttp(chain, fetchImpl = (...a) => globalThis.fetch(...a), 
         headers: jsonHeaders({ 'content-type': 'application/json;charset=UTF-8', ...headers }),
         body: JSON.stringify(body),
       })).text);
+    },
+    async deleteJson(url, { headers } = {}) {
+      return parseJson((await request('DELETE', url, { headers: jsonHeaders(headers) })).text);
     },
     async getText(url, { headers } = {}) {
       return textResult(await request('GET', url, { headers }));

@@ -7,7 +7,6 @@
 //   state.shufersal.variant = 'shape-changed'; // search returns {foo:1}
 //   state.<chain>.redirectTo = '/some/path';   // the chain's cart-write endpoint answers 302 -> that path
 //   state.hazihinam.errorMarker = 'X';         // /user/info answers an error whose description is X
-//   state.hazihinam.addIncrements = true;      // repeat adds increment instead of set
 //   state.forbiddenHits / state.requests       // recorded traffic
 
 export const HOSTS = {
@@ -53,7 +52,17 @@ export function createState() {
           gs: { BrandName: 'אלפרו' }, available_in: [82], sale: [],
         },
       ],
-      orders: [{ id: 9001, final_price: 210.5, supply_at: '2026-10-01 10:00:00', created_at: '2026-09-28 20:00:00' }],
+      // list rows: real shape (verified 2026-11-20); lines are served by the detail endpoint
+      orders: [{
+        id: 9001, final_price: 210.5, status_api: 'delivered', supply_at: '2026-10-01 10:00:00',
+        created_at: '2026-09-28T20:00:00.000000Z', items: [425127, 100001, 164854],
+        lines: [
+          { item_id: 425127, name: 'תערובת חליטת צמחים בטעם קרמל מלוח רמי לוי', price: '8.90', quantity: 1 },
+          { item_id: 100001, name: 'חלב טרי 3% בקבוק 1 ליטר', price: '6.90', quantity: 2 },
+          { item_id: 164854, name: 'מחיר משלוח', price: '29.90', quantity: 1 },
+        ],
+      }],
+      deliveryItemId: 164854,
       deliveryFee: 29.9,
       minOrder: null,
       variant: null,
@@ -93,7 +102,6 @@ export function createState() {
     hazihinam: {
       loggedIn: true,
       cart: {}, // id -> qty
-      addIncrements: false,
       catalog: [
         {
           Id: 7357, BarKod: 7290000000012, Name: 'חלב תנובה 3% 1 ליטר', ManufacturerName: 'תנובה', IsShakil: false,
@@ -109,7 +117,12 @@ export function createState() {
           Price_NET: 9.9, Price_Regular: 9.9, PricePerUnit: 9.9, PricePerUnitDesc: 'ליטר', IsInStock: false, Mivza: null,
         },
       ],
-      orders: [],
+      // order/history rows + their lines (real shapes, verified 2026-11-20); order lines carry no quantity
+      orders: [
+        { Id: 5101, ComaxId: 880101, Date: '03/09/2026', Total: 120.5, ClosingTotal: 118.4, IsDraftOrder: false, Order_Status: 5, itemIds: [7357, 7358] },
+        { Id: 5102, ComaxId: 0, Date: '15/10/2026', Total: 40, ClosingTotal: 0, IsDraftOrder: true, Order_Status: 0, itemIds: [7357] },
+        { Id: 5103, ComaxId: 880103, Date: '21/10/2026', Total: 75, ClosingTotal: 74, IsDraftOrder: false, Order_Status: 5, itemIds: [7357] },
+      ],
       deliveryFee: 25,
       minOrder: 150,
       errorMarker: null,
@@ -169,7 +182,8 @@ export function createMockSites(state = createState()) {
       total += t;
       lines.push({ id: p.id, name: p.name, price: p.price.price, quantity: qty, FormatedTotalPrice: t, is_delivery: false });
     }
-    lines.push({ id: 164854, name: 'מחיר משלוח', price: s.deliveryFee, quantity: 1, FormatedTotalPrice: s.deliveryFee, is_delivery: true });
+    // real site: no delivery line for an empty cart (verified 2026-11-20)
+    if (lines.length) lines.push({ id: 164854, name: 'מחיר משלוח', price: s.deliveryFee, quantity: 1, FormatedTotalPrice: s.deliveryFee, is_delivery: true });
     return { items: lines, price: round2(total), discount: 0, status: 200 };
   }
   async function rlHandle(req, res, u, host) {
@@ -177,7 +191,7 @@ export function createMockSites(state = createState()) {
     const cors = host === HOSTS.ramilevyApi
       ? {
         'access-control-allow-origin': 'https://www.rami-levy.co.il',
-        'access-control-allow-credentials': 'true',
+        // no allow-credentials: the real www-api rejects credentialed CORS (verified 2026-11-20)
         'access-control-allow-headers': 'authorization, ecomtoken, locale, content-type',
         'access-control-allow-methods': 'GET, POST, OPTIONS',
       }
@@ -206,13 +220,39 @@ export function createMockSites(state = createState()) {
     if (!rlAuth(req)) return send(res, 401, { message: 'Unauthenticated.' }, cors);
     if (p === `/api/v2/site/clubs/customer/${s.user.id}` && req.method === 'GET') {
       return send(res, 200, {
-        user: { id: s.user.id, store_id: s.user.store_id, first_name: s.user.first_name },
-        deliveryTimesCustomer: { store_id: s.user.store_id, price: s.deliveryFee },
-        cart: { items: Object.keys(s.cart).length ? { ...s.cart } : [] }, // PHP serialises {} as []
+        // Real shape (verified 2026-11-20): store_id is a string; deliveryTimesCustomer is null until a slot
+        // is chosen (the fee then comes only from the cart's is_delivery line); cart is null when empty and
+        // {uid, updated_at, last_update, items:{id: <number>}} otherwise.
+        user: { id: s.user.id, store_id: String(s.user.store_id), first_name: s.user.first_name },
+        deliveryTimesCustomer: null,
+        cart: Object.keys(s.cart).length
+          ? { uid: s.user.id, updated_at: '2026-11-20 12:00:00', last_update: 1795177960,
+            items: Object.fromEntries(Object.entries(s.cart).map(([k, v]) => [k, Number(v)])) }
+          : null,
       }, cors);
     }
     if (p === '/api/v3/site/orders' && req.method === 'GET') {
-      return send(res, 200, { data: { data: { data: s.orders } } }, cors);
+      const rows = s.orders.map(({ lines, ...o }) => ({
+        site_id: 1, from_hour: '10:00', to_hour: '12:00', supply: { city: 'x' }, ...o,
+      }));
+      return send(res, 200, { success: true, data: { data: { current_page: 1, data: rows } } }, cors);
+    }
+    const om = /^\/api\/v3\/site\/orders\/([^/]+)$/.exec(p);
+    if (om && req.method === 'GET') {
+      const o = s.orders.find((x) => String(x.id) === decodeURIComponent(om[1]));
+      if (!o) return send(res, 404, { message: 'not found' }, cors);
+      const lines = (o.lines || []).map((l, i) => ({
+        id: o.id * 100 + i, item_id: l.item_id, order_id: o.id, name: l.name, price: l.price, quantity: l.quantity,
+        final_price: l.price, total_price: (Number(l.price) * l.quantity).toFixed(2), department_id: 1, discount: '0.00', coupon_code: null,
+      }));
+      return send(res, 200, {
+        data: { id: o.id, final_price: o.final_price, delivery_price: s.deliveryFee, delivery_item_id: s.deliveryItemId, created_at: o.created_at, lines },
+      }, cors);
+    }
+    if (p === '/api/items' && req.method === 'POST') {
+      const want = String(json.ids ?? '').split(',').filter(Boolean);
+      const data = s.catalog.filter((c) => want.includes(String(c.id)));
+      return send(res, 200, { status: 200, total: data.length, data }, cors);
     }
     return send(res, 404, { message: 'not found' }, cors);
   }
@@ -240,11 +280,14 @@ export function createMockSites(state = createState()) {
     }
     if (!p.startsWith(`${SHUFERSAL_BASE}/`)) return send(res, 404, 'not found');
     const route = p.slice(SHUFERSAL_BASE.length);
+    // Real server (Tomcat) answers 400 with an empty body to raw `[` `]` in the request target — verified
+    // 2026-11-20: `cartContext[openFrom]` must be sent as `cartContext%5BopenFrom%5D`.
+    if (/[[\]]/.test(req.url || '')) return send(res, 400, '');
     const body = req.method === 'POST' ? await readBody(req) : '';
     const form = new URLSearchParams(body);
     const csrfOk = () => req.headers.csrftoken === s.csrf || form.get('CSRFToken') === s.csrf;
 
-    if (route === '/authentication/get-status-includes-otp') return send(res, 200, s.loggedIn);
+    if (route === '/authentication/get-status-includes-otp') return send(res, 200, s.loggedIn && !s.statusFalse); // statusFalse: real-site quirk
     if (route === '/search/results') {
       if (s.variant === 'shape-changed') return send(res, 200, { foo: 1 });
       const q = String(u.searchParams.get('q') || '').split(':')[0];
@@ -340,7 +383,7 @@ export function createMockSites(state = createState()) {
     if (route === '/item/addItemToCart' && req.method === 'POST' && s.redirectTo) {
       return send(res, 302, '', { location: s.redirectTo });
     }
-    if (route === '/user/info') return send(res, 200, hzOk({ UserInfo: s.loggedIn ? { FirstName: 'דנה' } : null }));
+    if (route === '/user/info') return send(res, 200, hzOk({ UserInfo: s.loggedIn ? { FName: 'דנה' } : null }));
     if (route === '/item/getItemsBySearch' && req.method === 'POST') {
       if (s.variant === 'shape-changed') return send(res, 200, hzOk({ foo: 1 }));
       const phrase = json.Object && json.Object.SearchPhrase;
@@ -353,10 +396,32 @@ export function createMockSites(state = createState()) {
       const prod = s.catalog.find((c) => c.Id === Number(o.ItemId));
       if (!prod) return send(res, 200, { IsOK: false, Results: null, ErrorResponse: { ErrorCode: 'ITEM_NOT_FOUND', ErrorDescription: 'item not found' } });
       const q = Number(o.Quantity);
-      s.cart[prod.Id] = s.addIncrements ? (s.cart[prod.Id] || 0) + q : q;
+      if (q === 0) delete s.cart[prod.Id]; else s.cart[prod.Id] = q; // SET semantics, 0 removes
       return send(res, 200, hzOk({ CartItemsCount: Object.keys(s.cart).length }));
     }
-    if (route === '/item/getItemsInCart') return send(res, 200, hzOk({ CartItems: { Items: hzCartItems() } }));
+    if (route === '/item/getItemsInCart') {
+      const Items = hzCartItems();
+      return send(res, 200, hzOk({ CartItems: { Items: Items.length ? Items : null }, CartItemsCount: Items.length }));
+    }
+    if (route === '/item/removeItemsInCart' && req.method === 'DELETE') {
+      s.cart = {};
+      return send(res, 200, hzOk({ CartItemsCount: 0 }));
+    }
+    if (route === '/order/history') {
+      return send(res, 200, hzOk({
+        Orders: s.orders.map(({ itemIds, ...o }) => o),
+      }));
+    }
+    const hom = /^\/item\/getItemsByOrder\/(\d+)$/.exec(route);
+    if (hom) {
+      const o = s.orders.find((x) => String(x.Id) === hom[1]);
+      if (!o) return send(res, 200, { IsOK: false, Results: null, ErrorResponse: { ErrorCode: 'ORDER_NOT_FOUND', ErrorDescription: 'order not found' } });
+      const Items = o.itemIds.map((id) => s.catalog.find((c) => c.Id === id)).filter(Boolean)
+        .map((c) => ({ ...c, CategoryName: 'כללי', Calculated_Price_NET: 0, Cart: null }));
+      return send(res, 200, hzOk({
+        OrderItems: { OrderId: o.Id, Date: o.Date, Categories: [{ Id: 1, Name: 'כללי', Items, ItemsCount: Items.length }] },
+      }));
+    }
     if (route === '/order/cartSummary') {
       const total = round2(hzCartItems().reduce((t, i) => t + i.Calculated_Price_NET, 0));
       return send(res, 200, hzOk({
@@ -375,7 +440,7 @@ export function createMockSites(state = createState()) {
     const url = req.url || '/';
     let u;
     try { u = new URL(url, `https://${host || 'localhost'}`); } catch { return send(res, 400, 'bad url'); }
-    S.requests.push({ host, method: req.method, path: u.pathname });
+    S.requests.push({ host, method: req.method, path: u.pathname, raw: url });
     let decoded = url;
     try { decoded = decodeURIComponent(url); } catch { /* keep raw */ }
     if (FORBIDDEN_RE.test(url) || FORBIDDEN_RE.test(decoded)) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const EXT = fileURLToPath(new URL('../../extension/', import.meta.url));
@@ -15,7 +15,7 @@ function walk(dir) {
   });
 }
 const files = walk(EXT).filter((p) => /\.(js|html|css|json)$/.test(p));
-const rel = (p) => relative(EXT, p);
+const rel = (p) => relative(EXT, p).split(sep).join("/"); // POSIX-style on Windows too
 
 test('manifest: exact permissions and host permissions', () => {
   assert.equal(manifest.manifest_version, 3);

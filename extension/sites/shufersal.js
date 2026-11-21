@@ -199,7 +199,7 @@ export function createAdapter(env) {
 
   async function removeEntry(line, token) {
     const q = `entryNumber=${encodeURIComponent(line.entryNumber)}&qty=0&sellingMethod=BY_UNIT&comment=`
-      + '&cartContext[openFrom]=CART&cartContext[recommendationType]=REGULAR&cartContext[action]=remove';
+      + '&cartContext%5BopenFrom%5D=CART&cartContext%5BrecommendationType%5D=REGULAR&cartContext%5Baction%5D=remove';
     await http.postForm(`${BASE}/cart/update?${q}`, { quantity: '0', CSRFToken: token },
       { headers: { ...XHR, CSRFToken: token } });
   }
@@ -211,7 +211,16 @@ export function createAdapter(env) {
       assertPageSafe(meta, env);
       const json = await http.getJson(`${BASE}/authentication/get-status-includes-otp`, { headers: XHR });
       if (typeof json !== 'boolean') throw new AdapterError('SHAPE_CHANGED', 'login status is not a boolean');
-      return { loggedIn: json };
+      if (json) return { loggedIn: true };
+      // Verified 2026-11-20: after some logins this endpoint answers false although the account is logged in
+      // (orders and cart writes work). Fall back to the account's order list: JSON = logged in.
+      try {
+        const orders = await http.getJson(`${BASE}/my-account/orders`, { headers: XHR });
+        return { loggedIn: !!orders && Array.isArray(orders.closedOrders) };
+      } catch (e) {
+        if (e instanceof AdapterError && ['NOT_LOGGED_IN', 'REDIRECT', 'SHAPE_CHANGED'].includes(e.code)) return { loggedIn: false };
+        throw e;
+      }
     },
 
     async getDeliveryContext() {
@@ -270,7 +279,7 @@ export function createAdapter(env) {
       const existing = lines.find((l) => l.id === code);
       if (existing) {
         const qs = `entryNumber=${encodeURIComponent(existing.entryNumber)}&qty=${fmt}&sellingMethod=${sellingMethod}&comment=`
-          + `&cartContext[openFrom]=CART&cartContext[recommendationType]=REGULAR${q === 0 ? '&cartContext[action]=remove' : ''}`;
+          + `&cartContext%5BopenFrom%5D=CART&cartContext%5BrecommendationType%5D=REGULAR${q === 0 ? '&cartContext%5Baction%5D=remove' : ''}`;
         await http.postForm(`${BASE}/cart/update?${qs}`, { quantity: fmt, CSRFToken: token },
           { headers: { ...XHR, CSRFToken: token } });
       } else if (q > 0) {
@@ -284,7 +293,7 @@ export function createAdapter(env) {
           affiliateCode: '',
         };
         const res = await http.postJsonText(
-          `${BASE}/cart/add?cartContext[openFrom]=CATALOG&cartContext[recommendationType]=REGULAR`, body,
+          `${BASE}/cart/add?cartContext%5BopenFrom%5D=CATALOG&cartContext%5BrecommendationType%5D=REGULAR`, body,
           { headers: { ...XHR, CSRFToken: token } });
         if (res.includes(ADD_FAILED)) throw new AdapterError('NETWORK', 'add failed');
       }

@@ -1,0 +1,6 @@
+{"IsOK":true,"ErrorResponse":null,"Results":{"Orders":[
+{"Id":5101,"ComaxId":880101,"Date":"03/09/2026","Total":120.5,"ClosingTotal":118.4,"IsDraftOrder":false,"Order_Status":5},
+{"Id":5102,"ComaxId":0,"Date":"15/10/2026","Total":40,"ClosingTotal":0,"IsDraftOrder":true,"Order_Status":0},
+{"Id":5103,"ComaxId":880103,"Date":"21/10/2026","Total":75,"ClosingTotal":74,"IsDraftOrder":false,"Order_Status":5},
+{"Id":5104,"ComaxId":880104,"Date":"not-a-date","Total":10,"ClosingTotal":10,"IsDraftOrder":false,"Order_Status":5}
+]}}

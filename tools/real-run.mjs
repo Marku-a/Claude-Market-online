@@ -5,6 +5,8 @@
 //
 //   node tools/real-run.mjs            open the three sites + the extension, keep the window open
 //   node tools/real-run.mjs diag       run the extension's diagnostics and print the (redacted) report
+//   node tools/real-run.mjs reload     (needs SAL_CDP_PORT) reload the extension from disk in the open window,
+//                                      keeping the site sessions (a restart drops Shufersal's session cookie)
 //
 // Env: SAL_PROFILE  profile directory (default ~/.sal-hacham-profile)
 //      SAL_HEADLESS=1  headless (smoke tests only; real sites need the visible window)
@@ -28,8 +30,8 @@ try {
 const EXT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../extension');
 const PROFILE = process.env.SAL_PROFILE || path.join(os.homedir(), '.sal-hacham-profile');
 const mode = process.argv[2] || 'open';
-if (!['open', 'diag'].includes(mode)) {
-  console.error('usage: node tools/real-run.mjs [open|diag]');
+if (!['open', 'diag', 'reload'].includes(mode)) {
+  console.error('usage: node tools/real-run.mjs [open|diag|reload]');
   process.exit(2);
 }
 if (path.resolve(PROFILE).startsWith(path.resolve(EXT, '..') + path.sep)) {
@@ -37,14 +39,39 @@ if (path.resolve(PROFILE).startsWith(path.resolve(EXT, '..') + path.sep)) {
   process.exit(2);
 }
 
-const ctx = await chromium.launchPersistentContext(PROFILE, {
-  channel: 'chromium',
-  headless: process.env.SAL_HEADLESS === '1',
-  locale: 'he-IL',
-  viewport: null,
-  args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
-});
-let [sw] = ctx.serviceWorkers();
+// SAL_CDP_PORT=<port>: `open` also listens on 127.0.0.1:<port> (local only), and `diag` attaches to that
+// already-open window instead of launching a second browser on the same (locked) profile.
+const CDP = process.env.SAL_CDP_PORT && /^\d{4,5}$/.test(process.env.SAL_CDP_PORT) ? process.env.SAL_CDP_PORT : null;
+
+if (mode === 'reload') {
+  if (!CDP) { console.error('reload needs SAL_CDP_PORT (the port the open window was started with)'); process.exit(2); }
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP}`);
+  const s = await browser.newBrowserCDPSession();
+  const { id } = await s.send('Extensions.loadUnpacked', { path: EXT }); // same path => replaces the loaded copy
+  console.log(`reloaded extension ${id}`);
+  process.exit(0);
+}
+
+let ctx;
+let attached = false;
+if (mode === 'diag' && CDP) {
+  try {
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP}`);
+    ctx = browser.contexts()[0];
+    attached = true;
+  } catch { /* no window open: launch one below */ }
+}
+if (!ctx) {
+  ctx = await chromium.launchPersistentContext(PROFILE, {
+    channel: 'chromium',
+    headless: process.env.SAL_HEADLESS === '1',
+    locale: 'he-IL',
+    viewport: null,
+    args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`,
+      ...(CDP ? [`--remote-debugging-port=${CDP}`, '--remote-debugging-address=127.0.0.1', '--enable-unsafe-extension-debugging'] : [])],
+  });
+}
+let sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
 if (!sw) sw = await ctx.waitForEvent('serviceworker', { timeout: 20000 });
 const extId = sw.url().split('/')[2];
 console.log(`extension id: ${extId}`);
@@ -65,5 +92,6 @@ if (mode === 'open') {
   await page.click('#btn-diag');
   await page.waitForFunction(() => document.getElementById('report').textContent.trim().length > 0, null, { timeout: 180000 });
   console.log(await page.textContent('#report'));
+  if (attached) { await page.close(); process.exit(0); } // leave the user's window open
   await ctx.close();
 }

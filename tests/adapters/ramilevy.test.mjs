@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import adapterDefault, {
-  createAdapter, parseSearch, parseCart, parseCustomer, _resetCache,
+  createAdapter, parseSearch, parseCart, parseCustomer, parseOrderList, parseOrderDetail, parseItemsInfo, _resetCache,
 } from '../../extension/sites/ramilevy.js';
 import { fixture, startMock, makeEnv, ramyStorage, leaks } from './helpers.mjs';
 import { RL_TOKEN } from '../e2e/mocks/server.mjs';
@@ -48,8 +48,11 @@ test('parseCart / parseCustomer', () => {
   assert.equal(parseCart({ items: [], price: 0 }, null).deliveryFee, null);
   assert.throws(() => parseCart({ items: [] }), (e) => e.code === 'SHAPE_CHANGED');
   const c = parseCustomer(fixture('ramilevy-customer.json'));
-  assert.deepEqual(c.items, { 425127: '1.00', 100001: '2.00' });
-  assert.equal(c.deliveryFee, 29.9);
+  assert.deepEqual(c.items, { 425127: 1, 100001: 2 }); // real site: numbers (verified 2026-11-20)
+  assert.equal(c.deliveryFee, null); // deliveryTimesCustomer is null before a slot is chosen
+  assert.equal(c.storeId, '331');
+  assert.equal(parseCustomer({ user: {}, cart: null }).items && Object.keys(parseCustomer({ user: {}, cart: null }).items).length, 0);
+  assert.equal(parseCustomer({ user: {}, deliveryTimesCustomer: { store_id: 5, price: 29.9 }, cart: null }).deliveryFee, 29.9);
   assert.deepEqual(parseCustomer({ user: {}, cart: { items: [] } }).items, {});
   assert.throws(() => parseCustomer({ user: {} }), (e) => e.code === 'SHAPE_CHANGED');
 });
@@ -96,14 +99,87 @@ test('full flow against the mock: login, search, set/replace/remove, cart totals
     assert.deepEqual(state.ramilevy.cart, {});
     assert.equal((await a.getCart()).lines.length, 0);
 
-    assert.deepEqual(await a.getOrders(5), []);
-    assert.equal(a.lastNote, 'ORDER_LINES_UNKNOWN');
+    const orders = await a.getOrders(5);
+    assert.equal(orders.length, 1);
+    assert.equal(a.lastNote, null);
     assert.deepEqual(state.forbiddenHits, []);
 
     // the api host was used with ecomtoken + bearer + locale, and CORS preflight host exists
     const apiReqs = state.requests.filter((r) => r.host === 'www-api.rami-levy.co.il');
     assert.ok(apiReqs.some((r) => r.path.startsWith('/api/v2/site/clubs/customer/4242')));
     assert.ok(apiReqs.some((r) => r.path === '/api/v3/site/orders'));
+    assert.ok(apiReqs.some((r) => r.path === '/api/v3/site/orders/9001'));
+  } finally {
+    await mock.close();
+  }
+});
+
+test('parseOrderList: date from supply_at else created_at, newest first, undated skipped', () => {
+  const l = parseOrderList(fixture('ramilevy-orders.json'));
+  assert.deepEqual(l, [{ id: 9001, date: '2026-10-01' }, { id: 9000, date: '2026-08-15' }]);
+  assert.deepEqual(parseOrderList({ data: { data: { data: [{ id: 1 }, { id: 2, created_at: 'x' }] } } }), []);
+  assert.throws(() => parseOrderList({ data: {} }), (e) => e.code === 'SHAPE_CHANGED');
+});
+
+test('parseOrderDetail: delivery line skipped, barcode/brand/category mapped, strings to numbers', () => {
+  const map = parseItemsInfo(fixture('ramilevy-items.json'));
+  const o = parseOrderDetail(fixture('ramilevy-order-detail.json'), 9001, '2026-10-01', map);
+  assert.equal(o.chain, 'ramilevy');
+  assert.equal(o.id, '9001');
+  assert.equal(o.date, '2026-10-01');
+  assert.deepEqual(o.items[1], {
+    id: '100001', barcode: '7290000000012', name: 'חלב טרי 3% בקבוק 1 ליטר', brand: 'תנובה', category: 'מוצרי חלב', qty: 2, price: 6.9,
+  });
+  assert.equal(o.items.length, 2);
+  const bare = parseOrderDetail(fixture('ramilevy-order-detail.json'), 9001, '2026-10-01', null);
+  assert.equal(bare.items[0].barcode, null);
+  assert.equal(bare.items[0].brand, null);
+  assert.throws(() => parseOrderDetail({ data: {} }, 1, 'd'), (e) => e.code === 'SHAPE_CHANGED');
+});
+
+test('getOrders against the mock: delivery skipped, barcodes, date, limit, no personal fields', async () => {
+  const { mock, a, state } = await setup((s) => {
+    s.ramilevy.orders.push({
+      id: 9002, final_price: 50, supply_at: '2026-11-05 10:00:00', created_at: '2026-11-01T10:00:00.000000Z', items: [100001],
+      lines: [{ item_id: 100001, name: 'חלב טרי 3% בקבוק 1 ליטר', price: '6.90', quantity: 3 }],
+    });
+  });
+  try {
+    const orders = await a.getOrders(10);
+    assert.deepEqual(orders.map((o) => [o.id, o.date]), [['9002', '2026-11-05'], ['9001', '2026-10-01']]);
+    const o = orders[1];
+    assert.deepEqual(o.items.map((i) => i.id), ['425127', '100001']);
+    assert.equal(o.items[0].barcode, '7290119672066');
+    assert.equal(o.items[1].qty, 2);
+    assert.equal(o.items[1].price, 6.9);
+    assert.deepEqual(Object.keys(o).sort(), ['chain', 'date', 'id', 'items']);
+    assert.equal((await a.getOrders(1)).length, 1);
+    assert.equal(leaks(orders, RL_TOKEN), false);
+    assert.equal(leaks(orders, 'supply'), false);
+    assert.ok(state.requests.some((r) => r.host === 'www.rami-levy.co.il' && r.path === '/api/items' && r.method === 'POST'));
+  } finally {
+    await mock.close();
+  }
+});
+
+test('getOrders: barcode lookup failure still returns lines with null barcodes', async () => {
+  const { mock, a, state } = await setup();
+  try {
+    state.ramilevy.catalog = [];
+    const orders = await a.getOrders(5);
+    assert.equal(orders[0].items.length, 2);
+    assert.ok(orders[0].items.every((i) => i.barcode === null && i.brand === null));
+  } finally {
+    await mock.close();
+  }
+});
+
+test('getOrders: hostile non-numeric order id is never put in a URL', async () => {
+  const { mock, a, state } = await setup((s) => { s.ramilevy.orders[0].id = '../../checkout'; });
+  try {
+    await assert.rejects(() => a.getOrders(), (e) => e.code === 'FORBIDDEN');
+    assert.deepEqual(state.forbiddenHits, []);
+    assert.ok(state.requests.every((r) => !/orders\/./.test(r.path)));
   } finally {
     await mock.close();
   }

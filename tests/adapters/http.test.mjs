@@ -37,7 +37,7 @@ test('status / network / parse mapping', async () => {
   assert.equal(await mk(resp(200, 'hi', url)).getText(url), 'hi');
 });
 
-test('requests are sent with credentials:include through safeFetch', async () => {
+test('same-origin requests carry credentials, API-origin requests never do', async () => {
   let seen;
   const h = createHttp(chain, async (u, init) => { seen = { u, init }; return resp(200, '{}', u); });
   await h.postJson('https://shop.hazi-hinam.co.il/proxy/api/x', { a: 1 }, { headers: { 'x-a': '1' } });
@@ -47,6 +47,12 @@ test('requests are sent with credentials:include through safeFetch', async () =>
   assert.equal(seen.init.headers['x-a'], '1');
   await h.postForm('https://shop.hazi-hinam.co.il/f', { a: 'b c' });
   assert.equal(seen.init.body, 'a=b+c');
+  const rl = createHttp({ id: 'ramilevy', origin: 'https://www.rami-levy.co.il', apiOrigins: ['https://www-api.rami-levy.co.il'], forbidden: [] },
+    async (u, init) => { seen = { u, init }; return resp(200, '{}', u); });
+  await rl.getJson('https://www-api.rami-levy.co.il/api/x');
+  assert.equal(seen.init.credentials, 'omit');
+  await rl.getJson('https://www.rami-levy.co.il/api/x');
+  assert.equal(seen.init.credentials, 'include');
   assert.deepEqual(h.lastRaw, '{}'); // text result keeps the string
 });
 
