@@ -1,12 +1,15 @@
 :root {
-  --primary: #1b5e20;
-  --primary-dark: #124116;
-  --primary-soft: #e8f3e9;
-  --ink: #1d2521;
-  --muted: #55605a;
-  --line: #cfd8d2;
-  --bg: #f6f8f6;
-  --card: #ffffff;
+  --primary: #b85a45;
+  --primary-dark: #8f3f2d;
+  --primary-soft: #fbe6df;
+  --slate: #56707a;
+  --slate-dark: #3e545d;
+  --slate-soft: #e3eaec;
+  --ink: #3a2e22;
+  --muted: #6b5d4e;
+  --line: #e2ded2;
+  --bg: #f3ede4;
+  --card: #fffdf9;
   --warn-bg: #fff4d6;
   --warn-ink: #5c4300;
   --err-bg: #fde8e8;
@@ -19,12 +22,13 @@
 body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--ink); line-height: 1.5; font-size: 16px; }
 .top, main, .foot { max-width: 1100px; margin: 0 auto; padding: 16px; }
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap); }
-.top h1 { margin: 0; font-size: 1.5rem; color: var(--primary); }
+.top h1 { margin: 0; font-size: 1.5rem; color: var(--slate-dark); }
+.logo { width: 56px; height: 56px; border-radius: 50%; flex: none; }
 .steps { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; flex: 1; }
 .steps li { display: flex; }
 .steps .step { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: .9rem; min-height: 0; }
-.steps button.step { border-color: var(--primary); color: var(--primary-dark); text-decoration: underline; }
-.steps .step[aria-current="step"] { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; text-decoration: none; }
+.steps button.step { border-color: var(--slate); color: var(--slate-dark); text-decoration: underline; }
+.steps .step[aria-current="step"] { background: var(--slate); color: #fff; border-color: var(--slate); font-weight: 700; text-decoration: none; }
 button.back { margin-bottom: 8px; }
 td.excluded .product-name { text-decoration: line-through; color: var(--muted); }
 .exclude { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; margin-top: 4px; }
@@ -38,7 +42,7 @@ h3 { margin: 0 0 8px; font-size: 1.1rem; }
 .card.winner { border: 3px solid var(--primary); background: var(--primary-soft); }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--muted); font-size: .85rem; background: #fff; }
 .badge.win { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
-.badge.ok { border-color: var(--primary); color: var(--primary-dark); }
+.badge.ok { border-color: var(--slate); color: var(--slate-dark); }
 .badge.bad { border-color: var(--err-ink); color: var(--err-ink); }
 button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--primary); background: #fff; color: var(--primary-dark); padding: 8px 16px; min-height: 40px; }
 button.primary { background: var(--primary); color: #fff; font-weight: 700; padding: 12px 28px; font-size: 1.1rem; }
@@ -47,7 +51,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 button.danger { border-color: var(--err-ink); color: var(--err-ink); }
 :focus-visible { outline: 3px solid #0b57d0; outline-offset: 2px; }
 label { display: block; font-weight: 600; margin-bottom: 4px; }
-input[type="text"], input[type="number"], select, textarea { font: inherit; padding: 8px; border: 1px solid #7a857e; border-radius: 8px; background: #fff; color: var(--ink); max-width: 100%; }
+input[type="text"], input[type="number"], select, textarea { font: inherit; padding: 8px; border: 1px solid #8a7d6c; border-radius: 8px; background: #fff; color: var(--ink); max-width: 100%; }
 textarea { width: 100%; min-height: 220px; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); margin: 0 0 var(--gap); padding: var(--gap); }
 legend { font-weight: 700; padding: 0 6px; }
@@ -61,7 +65,7 @@ legend { font-weight: 700; padding: 0 6px; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); margin-bottom: var(--gap); }
 table { border-collapse: collapse; width: 100%; min-width: 640px; }
 th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: start; vertical-align: top; }
-thead th { background: var(--primary-soft); }
+thead th { background: var(--slate-soft); color: var(--slate-dark); }
 .num { direction: ltr; unicode-bidi: isolate; display: inline-block; }
 .big { font-size: 1.5rem; font-weight: 800; }
 .kv { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0; }

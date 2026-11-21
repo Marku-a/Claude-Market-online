@@ -1,11 +1,16 @@
-:root { --primary: #1b5e20; --line: #cfd8d2; --ink: #1d2521; --err: #8a1c1c; }
-body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; color: var(--ink); background: #f6f8f6; line-height: 1.5; }
+:root { --primary: #b85a45; --slate: #56707a; --slate-dark: #3e545d; --line: #e2ded2; --ink: #3a2e22; --err: #8a1c1c; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; color: var(--ink); background: #f3ede4; line-height: 1.5; }
 main { max-width: 900px; margin: 0 auto; padding: 16px; }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.brand h1 { margin: 0; color: var(--slate-dark); }
+.logo { width: 56px; height: 56px; border-radius: 50%; flex: none; }
+a { color: var(--slate-dark); }
 button { font: inherit; padding: 10px 20px; border-radius: 8px; border: 1px solid var(--primary); background: var(--primary); color: #fff; cursor: pointer; }
 button:disabled { opacity: .5; }
 :focus-visible { outline: 3px solid #0b57d0; outline-offset: 2px; }
 .table-wrap { overflow-x: auto; margin-bottom: 16px; }
-table { border-collapse: collapse; width: 100%; background: #fff; }
+table { border-collapse: collapse; width: 100%; background: #fffdf9; }
 th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: start; }
+th { background: #e3eaec; color: var(--slate-dark); }
 .fail { color: var(--err); font-weight: 700; }
-pre { background: #fff; border: 1px solid var(--line); padding: 12px; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-all; }
+pre { background: #fffdf9; border: 1px solid var(--line); padding: 12px; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-all; }

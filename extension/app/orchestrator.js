@@ -2,7 +2,7 @@
 import { normalize, similarity, parseListLine, productKey } from '../engine/text.js';
 import { buildProfile, coPurchases, maybeForgot, goesWith } from '../engine/profile.js';
 import { lineCost, dealSuggestion, priceChange } from '../engine/choose.js';
-import { matchLine, summarize, recommend, runLine } from '../engine/compare.js';
+import { matchLine, summarize, recommend, runLine, annotateSizes } from '../engine/compare.js';
 
 const HISTORY_LIMIT = 10;
 const FAVOURITE_MIN_SIM = 0.5;
@@ -38,9 +38,10 @@ function applyChoice(line, chain, product) {
   const entry = line.chains[chain];
   const cost = lineCost(product, entry.qty);
   Object.assign(entry, {
-    product, match: matchFor(product, line.reference), lineTotal: cost.total,
+    product, match: matchFor(product, line.reference), baseMatch: undefined, lineTotal: cost.total,
     promoApplied: cost.promoApplied, promoSaving: cost.promoSaving, reasons: [], missingReason: null,
   });
+  annotateSizes(line.query, line.reference, line.chains); // sizes of all chains may now agree or differ
 }
 
 // Estimated total per chain over enabled lines. -> {[chain]: number}

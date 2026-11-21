@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import adapterDefault, {
   createAdapter, parseSearch, parseCartDoc, parseSummaryTotal, parsePrice, parseDeliveryFee,
-  parseOrderList, parseOrderDetail, toIsoDate,
+  parseOrderList, parseOrderDetail, toIsoDate, unitLabelOf,
 } from '../../extension/sites/shufersal.js';
 import { CHAINS } from '../../extension/sites/registry.js';
 import { isForbiddenUrl } from '../../extension/sites/guard.js';
@@ -256,4 +256,16 @@ test('login status endpoint says false while logged in -> orders fallback says l
   } finally {
     await mock.close();
   }
+});
+
+test('unit price label: bare מ"ל / גרם mean per 100 (real site, 2026-11-21)', async () => {
+  assert.equal(unitLabelOf('מ"ל'), '100 מ"ל');
+  assert.equal(unitLabelOf('גרם'), '100 גרם');
+  assert.equal(unitLabelOf('יחידה'), 'יחידה');
+  assert.equal(unitLabelOf('ק"ג'), 'ק"ג');
+  assert.equal(unitLabelOf(''), null);
+  const { unitPriceOf } = await import('../../extension/engine/size.js');
+  const milk = { name: 'חלב 3% בבקבוק 1 ליטר', price: 7.35, unitPrice: 0.74, unitLabel: unitLabelOf('מ"ל'), soldBy: 'unit' };
+  const u = unitPriceOf(milk);
+  assert.ok(u && Math.abs(u.value - 7.4) < 0.06, 'about ₪7.4 per litre, got ' + JSON.stringify(u));
 });

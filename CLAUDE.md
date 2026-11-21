@@ -14,7 +14,7 @@ every sentence true).
   diagnostics steps pass. A 2-item and a 3-item list ran through the extension UI with policy "keep": each site's own
   cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
   verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
-- Passing: `npm test` (221), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
+- Passing: `npm test` (281), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
 - Regular Chrome (unpacked, user's own profile): the user ran real lists there on 2026-11-21 (screenshots of the
   Rami Levy cart) and reports the version with back navigation / per-chain exclusion / stock warnings works
   (user-reported, not observed by Claude).

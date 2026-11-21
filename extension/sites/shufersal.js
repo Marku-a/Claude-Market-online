@@ -59,7 +59,7 @@ export function parseSearch(json) {
       category: null,
       price,
       unitPrice: it.pricePerUnit ? num(it.pricePerUnit.value) : null,
-      unitLabel: typeof it.unitForComparison === 'string' && it.unitForComparison ? it.unitForComparison : null,
+      unitLabel: unitLabelOf(it.unitForComparison),
       inStock: stock ? stock === 'inStock' : true,
       promo: eff !== null && eff < price
         ? { description: 'מבצע', minQty, totalPrice: round2(eff * minQty), clubOnly: false }
@@ -69,6 +69,14 @@ export function parseSearch(json) {
     if (out.length >= 10) break;
   }
   return out;
+}
+
+// Shufersal's pricePerUnit is per 100 ml / 100 g when unitForComparison is a bare 'מ"ל' / 'גרם' (verified 2026-11-21:
+// 1 l milk ₪7.35 -> 0.74 'מ"ל'; 1 kg rice ₪10.90 -> 1.09 'גרם'; eggs per 'יחידה'). Make the label say so.
+export function unitLabelOf(label) {
+  if (typeof label !== 'string' || !label.trim()) return null;
+  const l = label.trim();
+  return /^(מ"ל|מל|גרם|גר|ג')$/.test(l) ? `100 ${l}` : l;
 }
 
 const text = (el) => (el && el.textContent ? el.textContent.trim() : '');

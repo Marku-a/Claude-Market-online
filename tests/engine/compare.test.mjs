@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildProfile } from '../../extension/engine/profile.js';
 import {
-  matchLine, applyDiscounts, summarize, recommend, runLine, REASON_REMOVED, REASON_UNAVAILABLE,
+  matchLine, applyDiscounts, summarize, recommend, runLine, REASON_REMOVED, REASON_UNAVAILABLE, annotateSizes,
 } from '../../extension/engine/compare.js';
 import { parseListLine } from '../../extension/engine/text.js';
 import { chooseForLine } from '../../extension/engine/choose.js';
@@ -383,4 +383,143 @@ describe('removed and out-of-stock lines in summary and recommendation', () => {
     assert.ok(r.ranking.find((x) => x.chain === 'ramilevy').reasons.includes(OOS_REASON));
     assert.ok(!r.ranking.find((x) => x.chain === 'shufersal').reasons.includes(OOS_REASON));
   });
+});
+
+describe('size and weight', () => {
+  const none = () => buildProfile([], TODAY);
+  const MILKS = [cand('m2', 'חלב 3% טרה 2 ליטר', 12.9), cand('m1', 'חלב תנובה 3% שומן 1 ל\' קרטון בד"צ', 7.2)];
+
+  test('a size in the line wins: same size (within 5%) competes first', () => {
+    assert.equal(chooseForLine(L('חלב 1 ליטר'), MILKS, none()).product.id, 'm1');
+    assert.equal(chooseForLine(L('חלב 2 ליטר'), MILKS, none()).product.id, 'm2');
+    const rice = [cand('r5', 'אורז פרסי 500 גרם', 5), cand('r1', 'אורז פרסי 1קג שקדיה', 9.9)];
+    assert.equal(chooseForLine(L('אורז 1 קג'), rice, none()).product.id, 'r1'); // "1קג" fits although token "1" is absent
+    const eggs = [cand('e18', 'מארז 18 ביצים L', 21.7), cand('e12', 'ביצים 12 יח גדול L', 14.5)];
+    assert.equal(chooseForLine(L('ביצים 12'), eggs, none()).product.id, 'e12');
+    // no candidate of that size: the rule does not filter
+    assert.equal(chooseForLine(L('חלב 3 ליטר'), MILKS, none()).status, 'ok');
+  });
+
+  test('a favourite of another size is not the reference for a sized line', () => {
+    const fav = ['m1', 'חלב תנובה 3% 1 ליטר', 'תנובה', 'חלב'];
+    const p = buildProfile([order('1', '2026-10-01', [...fav, 1, 7]), order('2', '2026-10-08', [...fav, 1, 7])], TODAY);
+    const m = matchLine(L('חלב 2 ליטר'), {
+      hazihinam: [cand('m1', 'חלב תנובה 3% 1 ליטר', 7), cand('m2', 'חלב תנובה 3% 2 ליטר', 13)],
+    }, p);
+    assert.equal(m.reference, null);
+    assert.equal(m.chains.hazihinam.product.id, 'm2');
+  });
+
+  test('chosen size differs > 10% from the line size: different, with sizeNote', () => {
+    const m = matchLine(L('חלב 1 ליטר'), {
+      hazihinam: [cand('h1', 'חלב תנובה 3% 1 ליטר', 7)],
+      ramilevy: [cand('r2', 'חלב 3% טרה 2 ליטר', 12.9, { chain: 'ramilevy' })],
+    }, none());
+    assert.equal(m.chains.hazihinam.match, 'similar');
+    assert.equal(m.chains.hazihinam.sizeNote, null);
+    assert.equal(m.chains.ramilevy.match, 'different');
+    assert.equal(m.chains.ramilevy.sizeDiff, true);
+    assert.equal(m.chains.ramilevy.sizeNote, 'גודל שונה: 2 ליטר מול 1 ליטר');
+    assert.deepEqual(m.chains.ramilevy.size, { amount: 2000, unit: 'ml' });
+    assert.equal(m.chains.ramilevy.unitPrice.value, 6.45);
+  });
+
+  test('baseline is the reference size; identical barcode is never downgraded', () => {
+    const m = matchLine(L('חלב'), {
+      hazihinam: [cand('1', MILK[1], 7.4)],
+      ramilevy: [cand('r2', 'חלב תנובה 3% 2 ליטר', 12.9, { chain: 'ramilevy' })],
+      shufersal: [cand('s1', 'חלב תנובה 3% 0.97 ליטר', 7.1, { chain: 'shufersal' })],
+    }, prof());
+    assert.equal(m.chains.hazihinam.match, 'identical');
+    assert.equal(m.chains.ramilevy.match, 'different');
+    assert.equal(m.chains.ramilevy.sizeNote, 'גודל שונה: 2 ליטר מול 1 ליטר');
+    assert.equal(m.chains.shufersal.match, 'similar'); // 3% off: same size
+  });
+
+  test('no line size, no reference: majority decides; a tie marks both', () => {
+    const three = matchLine(L('חלב'), {
+      hazihinam: [cand('a', 'חלב 1 ליטר', 7)], ramilevy: [cand('b', 'חלב 1 ליטר', 6.9)], shufersal: [cand('c', 'חלב 2 ליטר', 12)],
+    }, none());
+    assert.deepEqual(Object.values(three.chains).map((e) => e.match), ['similar', 'similar', 'different']);
+    const two = matchLine(L('חלב'), { hazihinam: [cand('a', 'חלב 1 ליטר', 7)], ramilevy: [cand('b', 'חלב 2 ליטר', 12)] }, none());
+    assert.equal(two.chains.hazihinam.sizeNote, 'גודל שונה: 1 ליטר מול 2 ליטר');
+    assert.equal(two.chains.ramilevy.sizeNote, 'גודל שונה: 2 ליטר מול 1 ליטר');
+    assert.equal(two.chains.hazihinam.match, 'different');
+    // unknown size or another unit: no judgement
+    const mixed = matchLine(L('שמנת'), { hazihinam: [cand('a', 'שמנת 200 מל', 5)], ramilevy: [cand('b', 'שמנת 250 גרם', 6)],
+      shufersal: [cand('c', 'שמנת מתוקה', 6)] }, none());
+    assert.ok(Object.values(mixed.chains).every((e) => e.match === 'similar' && !e.sizeNote));
+  });
+
+  test('annotateSizes re-applies after a choice changes', () => {
+    const m = matchLine(L('חלב 1 ליטר'), {
+      hazihinam: [cand('h1', 'חלב 1 ליטר', 7)],
+      ramilevy: [cand('r2', 'חלב 2 ליטר', 12.9), cand('r1', 'חלב טרה 1 ליטר', 6.9)],
+    }, none());
+    assert.equal(m.chains.ramilevy.product.id, 'r1');
+    Object.assign(m.chains.ramilevy, { product: cand('r2', 'חלב 2 ליטר', 12.9), match: 'similar', baseMatch: undefined });
+    annotateSizes('חלב 1 ליטר', m.reference, m.chains);
+    assert.equal(m.chains.ramilevy.match, 'different');
+    Object.assign(m.chains.ramilevy, { product: cand('r1', 'חלב טרה 1 ליטר', 6.9), match: 'similar', baseMatch: undefined });
+    annotateSizes('חלב 1 ליטר', m.reference, m.chains);
+    assert.equal(m.chains.ramilevy.match, 'similar');
+    assert.equal(m.chains.ramilevy.sizeNote, null);
+  });
+
+  test('runLine carries the size note through', () => {
+    const e = { product: cand('p', 'חלב 2 ליטר', 12), match: 'different', qty: 1, lineTotal: 12, sizeNote: 'גודל שונה: 2 ליטר מול 1 ליטר', sizeDiff: true };
+    const l = runLine('חלב', e, { actualQty: 1, existingQty: 0, share: 12 }, null);
+    assert.equal(l.sizeNote, e.sizeNote);
+    assert.equal(l.sizeDiff, true);
+  });
+
+  // chainRuns with one line holding a real product name
+  const sized = (name, lineTotal, kw = {}) => ({
+    status: 'ok', cart: null,
+    lines: [{ line: 'חלב', match: 'similar', product: cand(name, name, lineTotal), qty: 1, lineTotal, ...kw }],
+  });
+
+  test('sizes differ, same unit: the cheapest is decided by unit price', () => {
+    const s = summarize({
+      hazihinam: sized('חלב 1 ליטר', 7.0),
+      ramilevy: sized('חלב 2 ליטר', 12.9, { match: 'different', sizeDiff: true, sizeNote: 'גודל שונה: 2 ליטר מול 1 ליטר' }),
+    }, {});
+    assert.deepEqual(s.perLineCheapest, [{ line: 'חלב', chain: 'ramilevy', price: 12.9, by: 'unit', unitPrice: 6.45, unitLabel: 'לליטר' }]);
+    assert.deepEqual(s.lines[0].cheapest, ['ramilevy']);
+    assert.equal(s.lines[0].cheapestBy, 'unit');
+    assert.equal(s.lines[0].chains.ramilevy.sizeNote, 'גודל שונה: 2 ליטר מול 1 ליטר');
+    assert.equal(s.lines[0].chains.hazihinam.unitPrice.value, 7);
+    assert.equal(s.chains.hazihinam.comparableTotal, 0); // not like-for-like in totals
+    assert.equal(s.chains.ramilevy.differentCount, 1);
+  });
+
+  test('unit price uses what the line really costs (promo / qty)', () => {
+    const s = summarize({
+      hazihinam: { status: 'ok', cart: null, lines: [{ line: 'x', match: 'similar', product: cand('a', 'חלב 1 ליטר', 7), qty: 2, lineTotal: 10 }] },
+      ramilevy: { status: 'ok', cart: null, lines: [{ line: 'x', match: 'different', sizeDiff: true, product: cand('b', 'חלב 2 ליטר', 12), qty: 2, lineTotal: 24 }] },
+    }, {});
+    assert.equal(s.perLineCheapest[0].chain, 'hazihinam'); // ₪5 per litre vs ₪6
+  });
+
+  test('unrelated different product, no unit price, or equal sizes: line total among comparable only', () => {
+    const unrelated = summarize({
+      hazihinam: sized('חלב 1 ליטר', 7.0),
+      ramilevy: sized('שוקו 2 ליטר', 5, { match: 'different' }),
+    }, {});
+    assert.deepEqual(unrelated.perLineCheapest.map((x) => x.chain), ['hazihinam']);
+    assert.equal(unrelated.lines[0].competitors, 1);
+    const noSize = summarize({
+      hazihinam: sized('חלב 1 ליטר', 7.0),
+      ramilevy: sized('חלב טרה', 5, { match: 'different', sizeDiff: true }),
+    }, {});
+    assert.deepEqual(noSize.perLineCheapest, [{ line: 'חלב', chain: 'hazihinam', price: 7 }]);
+    const equal = summarize({ hazihinam: sized('חלב 1 ליטר', 7.0), ramilevy: sized('חלב טרה 1 ליטר', 6.5) }, {});
+    assert.deepEqual(equal.perLineCheapest, [{ line: 'חלב', chain: 'ramilevy', price: 6.5 }]);
+    assert.equal(equal.lines[0].cheapestBy, 'total');
+  });
+});
+
+test('size and unit words in the line do not make a product "different"', () => {
+  const m = matchLine(L('אורז פרסי 1 קג'), { hazihinam: [cand('a', 'אורז פרסי', 9.9)], ramilevy: [cand('b', 'אורז פרסי 1קג שקדיה', 5.9, { chain: 'ramilevy' })] }, buildProfile([], TODAY));
+  assert.notEqual(m.chains.hazihinam.match, 'different');
 });

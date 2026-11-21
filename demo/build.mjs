@@ -26,20 +26,21 @@ if (/chrome\.(runtime|storage|tabs)/.test(js)) throw new Error('demo bundle must
 const css = fs.readFileSync(path.join(root, 'extension', 'app', 'app.css'), 'utf8')
   .replace(/background: #fff\b/g, 'background: var(--card)')
   .replace(/color: #fff\b/g, 'color: var(--on-primary)')
-  .replace(/#7a857e/g, 'var(--field-line)')
+  .replace(/#8a7d6c/g, 'var(--field-line)')
   .replace(/#0b57d0/g, 'var(--focus)');
 if (/#[0-9a-fA-F]{3,6}\b/.test(css.replace(/:root\s*{[^}]*}/, ''))) throw new Error('untokenised colour left in app.css');
 
-const dark = `--primary: #2f7d36; --primary-dark: #a9dbad; --primary-soft: #1c3220; --ink: #e8ede9; --muted: #a8b3ac;
-  --line: #3a4640; --bg: #131915; --card: #1c241f; --warn-bg: #46380f; --warn-ink: #ffe29a; --err-bg: #4a2020; --err-ink: #ffb9b9;
-  --on-primary: #ffffff; --field-line: #7d8a82; --focus: #8ab4ff; color-scheme: dark;`;
+const dark = `--primary: #d4705a; --primary-dark: #f0b4a5; --primary-soft: #3d2620; --ink: #f3ede4; --muted: #c9bcab;
+  --slate: #8fa9b3; --slate-dark: #c3d3d9; --slate-soft: #26343a;
+  --line: #4a4036; --bg: #1f1a15; --card: #2a231c; --warn-bg: #46380f; --warn-ink: #ffe29a; --err-bg: #4a2020; --err-ink: #ffb9b9;
+  --on-primary: #1f1a15; --field-line: #9c8f7e; --focus: #8ab4ff; color-scheme: dark;`;
 
 const html = `<title>סל חכם הדגמה</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 ${css}
 /* layout: one centred column, the extension's own screens; a slim banner marks the page as a demo */
-:root { --on-primary: #ffffff; --field-line: #7a857e; --focus: #0b57d0; }
+:root { --on-primary: #ffffff; --field-line: #8a7d6c; --focus: #0b57d0; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ${dark} } }
 :root[data-theme="dark"] { ${dark} }
 body { background: var(--bg); color: var(--ink); }

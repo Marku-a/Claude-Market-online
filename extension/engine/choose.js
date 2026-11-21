@@ -1,11 +1,14 @@
 // Per-chain product choice, promo math, suggestions. Pure, browser-compatible.
 import { similarity, productKey, queryNumbers, hasAllNumbers } from './text.js';
+import { productSize, splitQuery, sameSize } from './size.js';
 
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
 const hasUnit = (c) => isNum(c.unitPrice) && c.unitPrice > 0;
 const r2 = (x) => Math.round((x + Math.sign(x) * 1e-9) * 100) / 100;
 // A candidate must reach this share of the best name similarity in the results to be considered.
 export const RELEVANCE_SHARE = 0.5;
+// A size the user wrote ("1 ליטר", "1 קג", "12") matches a candidate whose size is within this share.
+export const SIZE_PREFER_TOL = 0.05;
 
 // A promo counts only when it beats the regular price by >= 5% per unit. Ignored for kg items.
 export function promoWorth(product) {
@@ -63,7 +66,17 @@ export function chooseForLine(parsedLine, results, profile) {
   let pool = maxRel > 0 ? stock.filter((c) => rel(c) >= maxRel * RELEVANCE_SHARE) : stock;
   // Numbers the user wrote ("12", "5%") win over habit: when some candidates carry them, only those compete
   // (Hatzi Hinam offered the usual 18-pack for "ביצים L 12" although a 12-pack was listed).
-  const nums = queryNumbers(parsedLine.query);
+  let nums = queryNumbers(parsedLine.query);
+  // A size the user wrote wins first: only same-size candidates compete (same unit, amount within 5%). The numbers
+  // that make up the size are then dropped from the numbers rule, so "אורז 1 קג" keeps "אורז פרסי 1קג".
+  const { size: qs, rest } = splitQuery(parsedLine.query);
+  if (qs) {
+    const fit = pool.filter((c) => sameSize(qs, productSize(c), SIZE_PREFER_TOL)); // incl. size inferred from the site unit price
+    if (fit.length) {
+      pool = fit;
+      nums = queryNumbers(rest);
+    }
+  }
   const exact = pool.filter((c) => hasAllNumbers(c.name, nums));
   if (nums.length && exact.length) pool = exact;
   const useUnit = pool.every(hasUnit);

@@ -2,6 +2,7 @@
 import { CHAINS } from '../sites/registry.js';
 import { createRunner, estimateTotals } from './orchestrator.js';
 import { REASON_REMOVED } from '../engine/compare.js';
+import { formatSize, formatUnitPrice } from '../engine/size.js';
 import { store } from './store.js';
 import { rpc, openSite, closeWorkers } from './rpc.js';
 
@@ -64,6 +65,12 @@ const num = (n) => h('span', { class: 'num', text: money(n) });
 const btn = (text, onclick, extra) => h('button', { type: 'button', onclick, ...extra }, text);
 const primary = (text, onclick, extra) => btn(text, onclick, { class: 'primary', ...extra });
 const live = (text) => { $('live').textContent = text; };
+// Under a product: its size and price per litre / kg / item ("2 ליטר · ₪7.45 לליטר"), and the size warning.
+const sizeInfo = (e) => {
+  const parts = [e.size ? formatSize(e.size) : '', e.unitPrice ? formatUnitPrice(e.unitPrice) : ''].filter(Boolean);
+  return [parts.length ? h('div', { class: 'lead', 'data-testid': 'size-info', text: parts.join(' · ') }) : null,
+    e.sizeNote ? h('div', { class: 'note', role: 'note', 'data-testid': 'size-note', text: e.sizeNote }) : null];
+};
 
 function defaultProfile() {
   return { address: { city: '', street: '', number: '' }, discounts: [], deliveryOverrides: {}, existingCartPolicy: 'ask' };
@@ -392,7 +399,8 @@ function drawReview(body) {
       if (!e) return td;
       if (e.product) {
         put(td, h('div', { class: 'product-name', text: e.product.name }),
-          e.excluded ? null : h('div', null, num(e.lineTotal), e.promoApplied ? ' · ' + (e.product.promo.description || 'מבצע') : ''));
+          e.excluded ? null : h('div', null, num(e.lineTotal), e.promoApplied ? ' · ' + (e.product.promo.description || 'מבצע') : ''),
+          e.excluded ? null : sizeInfo(e));
       } else put(td, h('div', { text: e.searchError ? 'החיפוש נכשל' : (e.missingReason || 'לא נמצא') }));
       if (e.excluded) put(td, h('span', { class: 'badge bad', text: REMOVED_TEXT }));
       else put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
@@ -559,16 +567,18 @@ function drawResult(body) {
   const okIds = Object.keys(summary.chains).filter((c) => summary.chains[c].status === 'ok');
   const head = h('tr', null, h('th', { scope: 'col', text: 'מוצר' }), okIds.map((c) => h('th', { scope: 'col', text: CHAINS[c].name })));
   const rows = summary.lines.map((l) => {
-    const comparable = (m) => m === 'identical' || m === 'similar'; // 'different' never competes for cheapest
-    const prices = okIds.filter((c) => comparable(l.chains[c].match)).map((c) => l.chains[c].lineTotal);
-    const min = prices.length ? Math.min(...prices) : null;
+    // the engine decides (summarize): 'different' never competes, except a size-only difference by unit price
+    const cheapest = l.cheapest || [];
     return h('tr', null, h('th', { scope: 'row', text: l.line }), okIds.map((c) => {
       const e = l.chains[c];
       const td = h('td');
-      if (e.product) put(td, h('div', { text: e.product.name }), h('div', null, num(e.lineTotal)));
+      if (e.product) put(td, h('div', { text: e.product.name }), h('div', null, num(e.lineTotal)), sizeInfo(e));
       put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'),
         text: e.match === 'missing' && e.missingReason ? e.missingReason : MATCH_TEXT[e.match] }));
-      if (comparable(e.match) && e.lineTotal === min && prices.length > 1) put(td, ' ', h('span', { class: 'cheapest', text: 'הזול ביותר' }));
+      if (cheapest.includes(c) && l.competitors > 1) {
+        put(td, ' ', h('span', { class: 'cheapest', text: 'הזול ביותר' }),
+          l.cheapestBy === 'unit' ? h('div', { class: 'lead', text: 'לפי המחיר ליחידת מידה' }) : null);
+      }
       return td;
     }));
   });
