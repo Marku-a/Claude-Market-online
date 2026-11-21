@@ -15,8 +15,9 @@ every sentence true).
   cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
   verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
 - Passing: `npm test` (193), `npm run test:e2e` (11), mocks and fixtures follow the real response shapes.
-- Not yet verified: the extension in the user's regular Chrome (only Playwright's Chromium so far); Hatzi Hinam
-  `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
+- Regular Chrome (unpacked, user's own profile): the user ran the same list on 2026-11-21 and reports the result page
+  showed totals for all three chains (user-reported; not observed by Claude).
+- Not yet verified: Hatzi Hinam `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
 - Known product-matching weakness (engine, not adapters): with no barcode match, `chooseForLine` can pick an
   unrelated product by name (Rami Levy "אטריות ביצים" for "ביצים L 12"); it is badged "שונה" but still counted and can
   win "cheapest". Next engine task.
