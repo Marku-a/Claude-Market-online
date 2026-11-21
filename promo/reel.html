@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>סל חכם — Reel (1080×1920)</title>
+<link rel="icon" href="data:,">
+<!--
+  Source of promo/sal-hacham-reel.mp4. Everything is drawn on one <canvas> (1080x1920).
+  Open this file directly for a looping preview (add ?t=12.5 to freeze at a time).
+  tools/make-reel.mjs opens it with ?mode=record and records it with MediaRecorder.
+  UI screenshots in shots/ are of the real extension against the test mock sites (fictional prices).
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1a17; }
+  canvas { display: block; height: 100vh; width: auto; aspect-ratio: 9 / 16; margin: 0 auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="shots/meta.js"></script>
+<script>
+'use strict';
+const W = 1080, H = 1920, FPS = 30;
+const C = {
+  coral: '#D4705A', coralDark: '#B85A45', slate: '#56707A', slateDark: '#3F5560',
+  cream: '#F3EDE4', brown: '#3A2E22', paper: '#FFFDF9', muted: '#7A6B5C', line: '#E2D8CA',
+};
+const FONT = '"Segoe UI", Arial, sans-serif';
+const params = new URLSearchParams(location.search);
+const MODE = params.get('mode') || 'preview';
+const META = window.SHOTS_META || {};
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ------------------------------------------------------------------ helpers
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const P = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eOut = (p) => 1 - Math.pow(1 - p, 3);
+const eInOut = (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const eBack = (p) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); };
+const inFx = (lt, d, dur = 0.6) => eOut(P(lt, d, d + dur));
+
+function setFont(size, weight) { ctx.font = `${weight} ${size}px ${FONT}`; }
+// one line of text; shrinks to fit maxW
+function txt(s, x, y, o = {}) {
+  const { size = 72, weight = 700, color = C.brown, align = 'center', dir = 'rtl', maxW = 940, alpha = 1 } = o;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.direction = dir; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  let sz = size; setFont(sz, weight);
+  while (ctx.measureText(s).width > maxW && sz > 18) { sz -= 2; setFont(sz, weight); }
+  ctx.fillStyle = color;
+  ctx.fillText(s, x, y);
+  ctx.restore();
+}
+// caption line that rises + fades in
+function cap(s, y, lt, d, o = {}) {
+  const p = inFx(lt, d, 0.55);
+  if (p <= 0) return;
+  ctx.save(); ctx.translate(0, (1 - p) * 46);
+  txt(s, W / 2, y, { ...o, alpha: p });
+  ctx.restore();
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function shadow(blur = 40, dy = 16, a = 0.18) { ctx.shadowColor = `rgba(58,46,34,${a})`; ctx.shadowBlur = blur; ctx.shadowOffsetY = dy; }
+function card(x, y, w, h, r = 28, fill = C.paper) { ctx.save(); shadow(); ctx.fillStyle = fill; rr(x, y, w, h, r); ctx.fill(); ctx.restore(); }
+function check(x, y, s, color = '#fff', lw = 10) {
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(x - s * 0.45, y); ctx.lineTo(x - s * 0.12, y + s * 0.32); ctx.lineTo(x + s * 0.48, y - s * 0.35); ctx.stroke();
+  ctx.restore();
+}
+function blob(x, y, r, c) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, c); g.addColorStop(1, 'rgba(243,237,228,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+}
+function background(t) {
+  ctx.fillStyle = C.cream; ctx.fillRect(0, 0, W, H);
+  blob(170 + 60 * Math.sin(t * 0.3), 420 + 50 * Math.cos(t * 0.23), 460, 'rgba(212,112,90,0.13)');
+  blob(930 + 50 * Math.cos(t * 0.21), 1540 + 60 * Math.sin(t * 0.27), 560, 'rgba(86,112,122,0.12)');
+  blob(980, 260 + 40 * Math.sin(t * 0.4), 240, 'rgba(86,112,122,0.07)');
+}
+function logo(cx, cy, size, alpha = 1) {
+  if (alpha <= 0 || size <= 0) return;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  shadow(50, 18, 0.22);
+  ctx.fillStyle = '#EFE9E0'; ctx.beginPath(); ctx.arc(cx, cy, size / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.beginPath(); ctx.arc(cx, cy, size / 2, 0, Math.PI * 2); ctx.clip();
+  ctx.drawImage(IMG.logo, cx - size / 2, cy - size / 2, size, size);
+  ctx.restore();
+}
+function pill(s, cx, cy, o = {}) {
+  const { size = 40, bg = C.coralDark, color = '#fff', padX = 34, h = size * 1.9, alpha = 1, dir = 'rtl' } = o;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  setFont(size, 700); const w = ctx.measureText(s).width + padX * 2;
+  shadow(24, 8, 0.2); ctx.fillStyle = bg; rr(cx - w / 2, cy - h / 2, w, h, h / 2); ctx.fill(); ctx.restore();
+  txt(s, cx, cy + 2, { size, color, alpha, dir, maxW: 2000 });
+}
+// pulsing highlight ring around a rect
+function ring(r, t, alpha = 1, pad = 10) {
+  if (alpha <= 0) return;
+  const k = 0.5 + 0.5 * Math.sin(t * 6);
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = C.coral; ctx.lineWidth = 7 + 3 * k;
+  ctx.shadowColor = 'rgba(212,112,90,0.7)'; ctx.shadowBlur = 18 + 16 * k;
+  rr(r.x - pad, r.y - pad, r.w + pad * 2, r.h + pad * 2, 18); ctx.stroke();
+  ctx.restore();
+}
+// mouse pointer with optional click ripple
+function pointer(x, y, alpha = 1, click = 0) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  if (click > 0 && click < 1) {
+    ctx.strokeStyle = `rgba(212,112,90,${1 - click})`; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.arc(x, y, 20 + 70 * click, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.translate(x, y); ctx.scale(2.1, 2.1);
+  shadow(10, 4, 0.35);
+  ctx.fillStyle = '#fff'; ctx.strokeStyle = C.brown; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 34); ctx.lineTo(8, 26); ctx.lineTo(14, 39); ctx.lineTo(20, 36); ctx.lineTo(14, 24); ctx.lineTo(25, 24); ctx.closePath();
+  ctx.fill(); ctx.shadowColor = 'transparent'; ctx.stroke();
+  ctx.restore();
+}
+// browser window showing a screenshot; returns a mapper from CSS boxes (relative to the shot) to canvas rects
+const BPAD = 26; // page margin inside the browser window
+const BBAR = 72;
+const bScale = (key, w) => (w - 2 * BPAD) / META[key].cssW;
+// zoom > 1 magnifies the page, keeping its right (RTL start) edge in place
+function browser(key, x, y, w, h, scroll = 0, alpha = 1, zoom = 1) {
+  const img = IMG[key], m = META[key];
+  const bar = BBAR, s = bScale(key, w) * zoom, left = x + w - BPAD - m.cssW * s;
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.save(); shadow(60, 24, 0.25); ctx.fillStyle = C.paper; rr(x, y, w, h, 30); ctx.fill(); ctx.restore();
+  ctx.save(); rr(x, y, w, h, 30); ctx.clip();
+  ctx.fillStyle = '#E6DCCD'; ctx.fillRect(x, y, w, bar);
+  [C.coral, '#E2B25A', C.slate].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x + 42 + i * 34, y + bar / 2, 10, 0, Math.PI * 2); ctx.fill(); });
+  ctx.fillStyle = C.cream; rr(x + w - 330, y + 14, 300, bar - 14, [18, 18, 0, 0]); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(x + w - 70, y + 14 + (bar - 14) / 2, 20, 0, Math.PI * 2); ctx.clip();
+  ctx.drawImage(IMG.logo, x + w - 90, y + 14 + (bar - 14) / 2 - 20, 40, 40); ctx.restore();
+  txt('סל חכם', x + w - 104, y + 14 + (bar - 14) / 2, { size: 30, align: 'right', color: C.slateDark });
+  ctx.fillStyle = C.cream; ctx.fillRect(x, y + bar, w, h - bar);
+  ctx.beginPath(); ctx.rect(x, y + bar, w, h - bar); ctx.clip();
+  ctx.drawImage(img, left, y + bar + BPAD - scroll * s, m.cssW * s, m.cssH * s);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(58,46,34,0.14)'; ctx.lineWidth = 2; rr(x, y, w, h, 30); ctx.stroke();
+  ctx.restore();
+  return (b) => ({ x: left + b.x * s, y: y + bar + BPAD + (b.y - scroll) * s, w: b.w * s, h: b.h * s });
+}
+
+// ------------------------------------------------------------------ little illustrations
+function cartIcon(cx, cy, k, color) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(k, k);
+  ctx.strokeStyle = color; ctx.lineWidth = 11; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-120, -95); ctx.lineTo(-88, -95); ctx.lineTo(-62, 40); ctx.lineTo(86, 40); ctx.lineTo(110, -52); ctx.lineTo(-76, -52); ctx.stroke();
+  ctx.lineWidth = 6;
+  for (const xx of [-30, 10, 50]) { ctx.beginPath(); ctx.moveTo(xx, -52); ctx.lineTo(xx + (xx > 0 ? -6 : 4), 40); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(-70, -6); ctx.lineTo(98, -6); ctx.stroke();
+  ctx.fillStyle = color;
+  for (const xx of [-44, 70]) { ctx.beginPath(); ctx.arc(xx, 74, 15, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+function milk(x, y, s = 1, rot = 0) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.fillStyle = '#FFFFFF'; ctx.strokeStyle = C.slateDark; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-26, -30); ctx.lineTo(0, -58); ctx.lineTo(26, -30); ctx.lineTo(26, 44); ctx.lineTo(-26, 44); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#6E9BC4'; ctx.fillRect(-24, -4, 48, 24);
+  ctx.restore();
+}
+function bread(x, y, s = 1, rot = 0) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.fillStyle = '#D9A066'; ctx.strokeStyle = '#8A5A2E'; ctx.lineWidth = 4;
+  rr(-46, -26, 92, 54, 24); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = '#F2CF9E'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  for (const xx of [-20, 0, 20]) { ctx.beginPath(); ctx.moveTo(xx - 7, -12); ctx.lineTo(xx + 7, 8); ctx.stroke(); }
+  ctx.restore();
+}
+function clock(cx, cy, r, t, alpha) {
+  ctx.save(); ctx.globalAlpha *= alpha;
+  shadow(30, 10, 0.18); ctx.fillStyle = C.paper; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = C.coralDark; ctx.lineWidth = 12; ctx.stroke();
+  ctx.strokeStyle = C.brown; ctx.lineCap = 'round';
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r * 0.78, cy + Math.sin(a) * r * 0.78); ctx.lineTo(cx + Math.cos(a) * r * 0.88, cy + Math.sin(a) * r * 0.88); ctx.stroke();
+  }
+  const hand = (a, len, lw) => { ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.sin(a) * len, cy - Math.cos(a) * len); ctx.stroke(); };
+  hand(t * 7, r * 0.7, 8);
+  hand(t * 7 / 12 + 1, r * 0.45, 12);
+  ctx.fillStyle = C.coralDark; ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// ------------------------------------------------------------------ scenes (lt = seconds since scene start)
+const CHAIN_NAMES = ['חצי חינם', 'רמי לוי', 'שופרסל']; // same right-to-left order as the extension
+const LINES = (META.review && META.review.lines) || [];
+
+function sHook(lt) {
+  const p = eBack(P(lt, 0.1, 0.85));
+  const float = Math.sin(lt * 2) * 8;
+  logo(W / 2, 700 + float, 560 * p, P(lt, 0.1, 0.4));
+  cap('שופרסל, רמי לוי או חצי חינם?', 1140, lt, 0.8, { size: 68 });
+  cap('איפה הסל שלך', 1275, lt, 1.3, { size: 104, weight: 700, color: C.coralDark });
+  cap('הכי זול?', 1400, lt, 1.5, { size: 104, weight: 700, color: C.coralDark });
+}
+
+function sPain(lt) {
+  cap('להשוות ידנית?', 330, lt, 0, { size: 100, weight: 700 });
+  CHAIN_NAMES.forEach((name, i) => {
+    const p = inFx(lt, 0.3 + i * 0.18, 0.6);
+    if (p <= 0) return;
+    const y = 500 + i * 200, x = 120 + (1 - p) * 300;
+    ctx.save(); ctx.globalAlpha *= p;
+    card(x, y, 840, 160, 26);
+    // fake site tab: name on the right, unknown prices on the left
+    txt(name, x + 800, y + 58, { size: 54, align: 'right' });
+    ctx.fillStyle = C.line; rr(x + 470, y + 104, 330, 16, 8); ctx.fill();
+    ctx.fillStyle = '#F3E3DE'; rr(x + 40, y + 45, 250, 70, 35); ctx.fill();
+    txt('?? ₪', x + 165, y + 82, { size: 44, color: C.coralDark, dir: 'ltr' });
+    // spinner
+    ctx.strokeStyle = C.slate; ctx.lineWidth = 8; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(x + 360, y + 80, 24, lt * 6 + i, lt * 6 + i + 4.2); ctx.stroke();
+    ctx.restore();
+  });
+  clock(W / 2, 1225, 120, lt, inFx(lt, 1.2, 0.5));
+  cap('שעה של עבודה.', 1440, lt, 1.6, { size: 96, weight: 700, color: C.coralDark });
+}
+
+function sSolution(lt) {
+  cap('סל חכם', 300, lt, 0, { size: 110, weight: 700, color: C.coralDark });
+  cap('כותבים את הרשימה פעם אחת', 425, lt, 0.25, { size: 72 });
+  const p = inFx(lt, 0.45, 0.7);
+  if (p <= 0) return;
+  const m = META.list;
+  const fx = 90, fw = 900, fy = 540 + (1 - p) * 220, fh = 990;
+  const visible = (fh - BBAR - BPAD) / bScale('list', fw);
+  const maxScroll = Math.max(0, m.boxes.build.y + m.boxes.build.h + 60 - visible);
+  const scroll = maxScroll * eInOut(P(lt, 2.4, 3.4));
+  const map = browser('list', fx, fy, fw, fh, scroll, p);
+  ring(map(m.boxes.input), lt, P(lt, 1.2, 1.5) * (1 - P(lt, 2.3, 2.5)));
+  const b = map(m.boxes.build);
+  ring(b, lt, P(lt, 3.4, 3.6));
+  pointer(b.x + b.w * 0.78, b.y + b.h * 0.55, P(lt, 3.5, 3.7), P(lt, 3.85, 4.3));
+}
+
+function sCarts(lt) {
+  cap('התוסף ממלא עגלה אמיתית', 300, lt, 0, { size: 76, weight: 700 });
+  cap('בכל אחד משלושת האתרים', 405, lt, 0.25, { size: 76, weight: 700, color: C.coralDark });
+  // the written list
+  const lp = inFx(lt, 0.4, 0.6);
+  const LX = W / 2, LY = 640;
+  if (lp > 0) {
+    ctx.save(); ctx.globalAlpha *= lp; ctx.translate(0, (1 - lp) * 40);
+    card(LX - 250, LY - 105, 500, 210, 24);
+    ctx.fillStyle = C.coral; rr(LX - 250, LY - 105, 500, 16, [24, 24, 0, 0]); ctx.fill();
+    LINES.forEach((l, i) => txt((l.qty > 1 ? l.qty + ' ' : '') + l.query, LX + 200, LY - 25 + i * 75, { size: 46, align: 'right', maxW: 400 }));
+    ctx.restore();
+  }
+  const xs = [830, 540, 250], CY = 1130;
+  xs.forEach((cx, c) => {
+    const cp = inFx(lt, 0.6 + c * 0.15, 0.6);
+    if (cp <= 0) return;
+    ctx.save(); ctx.globalAlpha *= cp; ctx.translate(0, (1 - cp) * 60);
+    // items flying in (2 milk + bread)
+    const items = [milk, milk, bread];
+    items.forEach((draw, k) => {
+      const ts = 1.3 + k * 0.32 + c * 0.12, q = P(lt, ts, ts + 0.75);
+      if (q <= 0) return;
+      const e = eInOut(q);
+      const tx = cx + (k - 1) * 48, ty = CY - 50 + (k === 2 ? 8 : 0);
+      const x = lerp(LX, tx, e), y = lerp(LY + 60, ty, e) - Math.sin(e * Math.PI) * 160;
+      draw(x, y, lerp(0.6, 0.85, e), (1 - e) * (k - 1) * 0.6);
+    });
+    const full = P(lt, 2.6 + c * 0.12, 2.9 + c * 0.12);
+    cartIcon(cx, CY, 1.05, full > 0 ? C.slateDark : C.slate);
+    txt(CHAIN_NAMES[c], cx, CY + 165, { size: 50, maxW: 270 });
+    if (full > 0) {
+      const s = eBack(full);
+      ctx.save(); ctx.translate(cx + 110, CY - 110); ctx.scale(s, s);
+      ctx.fillStyle = C.coralDark; ctx.beginPath(); ctx.arc(0, 0, 38, 0, Math.PI * 2); ctx.fill();
+      check(0, 2, 40, '#fff', 9);
+      ctx.restore();
+      txt('עגלה מלאה', cx, CY + 235, { size: 38, color: C.slateDark, alpha: full, maxW: 270 });
+    }
+    ctx.restore();
+  });
+  cap('בחשבון שלכם, באתר עצמו', 1480, lt, 3.2, { size: 48, weight: 600, color: C.muted });
+}
+
+function sReview(lt) {
+  cap('בודקים מה נבחר', 300, lt, 0, { size: 90, weight: 700 });
+  cap('מחליפים, או ״לא לקנות כאן״', 415, lt, 0.25, { size: 72, weight: 700, color: C.coralDark });
+  const p = inFx(lt, 0.45, 0.7);
+  if (p <= 0) return;
+  const m = META.review;
+  const fw = 960, zoom = lerp(1, 1.9, eInOut(P(lt, 0.9, 1.6)));
+  const fh = 900;
+  const fy = 530 + (1 - p) * 220;
+  // zoom into the start of the table (product + first site column); scroll so the table sits in view
+  const scroll = Math.max(0, m.boxes.table.y - 20) * eInOut(P(lt, 0.9, 1.6));
+  const map = browser('review', (W - fw) / 2, fy, fw, fh, scroll, p, zoom);
+  const sel = m.boxes.select && map(m.boxes.select);
+  const ex = map(m.boxes.exclude);
+  const a1 = P(lt, 1.3, 1.5) * (1 - P(lt, 2.6, 2.8));
+  if (sel) {
+    ring(sel, lt, a1, 8);
+    pill('בוחרים מוצר אחר', W / 2, fy + fh + 80, { alpha: a1, size: 46 });
+  }
+  const a2 = P(lt, 2.8, 3.0);
+  ring(ex, lt, a2, 8);
+  // simulate ticking the checkbox
+  const tick = P(lt, 3.4, 3.5);
+  pointer(ex.x + ex.w - 12, ex.y + ex.h / 2, a2, P(lt, 3.35, 3.8));
+  if (tick > 0) {
+    const cb = META.review.boxes.exclude, box = map({ x: cb.x + cb.w - 16, y: cb.y + cb.h / 2 - 8, w: 16, h: 16 });
+    ctx.save(); ctx.globalAlpha *= tick;
+    ctx.fillStyle = C.slate; rr(box.x - 3, box.y - 3, box.w + 6, box.h + 6, 5); ctx.fill();
+    check(box.x + box.w / 2, box.y + box.h / 2, box.w * 0.9, '#fff', 4);
+    ctx.restore();
+  }
+  pill('מדלגים על המוצר באתר הזה', W / 2, fy + fh + 80, { alpha: a2, size: 46 });
+}
+
+function sResult(lt) {
+  cap('רואים מחיר אמיתי מהאתרים,', 300, lt, 0, { size: 72, weight: 700 });
+  cap('כולל משלוח — והמשתלם מסומן', 405, lt, 0.25, { size: 72, weight: 700, color: C.coralDark });
+  const p = inFx(lt, 0.45, 0.7);
+  if (p <= 0) return;
+  const m = META.result;
+  const fw = 900, fh = 1010, s = bScale('result', fw), fy = 520 + (1 - p) * 220;
+  const visible = (fh - BBAR - BPAD) / s;
+  const win = m.boxes.winner;
+  const target = clamp(win.y + win.h / 2 - visible / 2, 0, Math.max(0, m.cssH - visible));
+  const scroll = target * eInOut(P(lt, 1.0, 2.6));
+  const map = browser('result', (W - fw) / 2, fy, fw, fh, scroll, p);
+  ring(map(win), lt, P(lt, 2.7, 3.0), 6);
+  const f = map(m.boxes.winnerFinal);
+  ring(f, lt, P(lt, 3.3, 3.6), 12);
+}
+
+function sCart(lt) {
+  cap('עבור לעגלה —', 300, lt, 0, { size: 96, weight: 700 });
+  cap('ומשלמים באתר כרגיל.', 420, lt, 0.25, { size: 84, weight: 700, color: C.coralDark });
+  const m = META.result, img = IMG.result, dpr = img.width / m.cssW;
+  const best = CHAIN_NAMES[['hazihinam', 'ramilevy', 'shufersal'].indexOf(m.best)] || '';
+  // zoomed crop of the winner card from the real result screenshot
+  const win = m.boxes.winner;
+  const out = eInOut(P(lt, 1.9, 2.3));
+  const p = inFx(lt, 0.3, 0.6) * (1 - out);
+  if (p > 0) {
+    const s = 900 / win.w, x = 90, y = 580 + (1 - p) * 120 - out * 80;
+    ctx.save(); ctx.globalAlpha *= p;
+    ctx.save(); shadow(50, 20, 0.25); ctx.fillStyle = C.paper; rr(x, y, 900, win.h * s, 26); ctx.fill(); ctx.restore();
+    ctx.save(); rr(x, y, 900, win.h * s, 26); ctx.clip();
+    ctx.drawImage(img, win.x * dpr, win.y * dpr, win.w * dpr, win.h * dpr, x, y, 900, win.h * s);
+    ctx.restore();
+    const b = m.boxes.cartBtn, br = { x: x + (b.x - win.x) * s, y: y + (b.y - win.y) * s, w: b.w * s, h: b.h * s };
+    ring(br, lt, P(lt, 0.8, 1.0), 8);
+    pointer(br.x + br.w * 0.88, br.y + br.h * 0.6, P(lt, 0.9, 1.1), P(lt, 1.3, 1.8));
+    ctx.restore();
+  }
+  // the site's own cart (illustration)
+  const q = inFx(lt, 2.1, 0.6);
+  if (q <= 0) return;
+  ctx.save(); ctx.globalAlpha *= q; ctx.translate(0, (1 - q) * 80);
+  const x = 110, y = 600, w = 860, h = 820;
+  card(x, y, w, h, 30);
+  ctx.fillStyle = C.slate; rr(x, y, w, 120, [30, 30, 0, 0]); ctx.fill();
+  txt('העגלה שלך באתר ' + best, x + w - 50, y + 62, { size: 50, align: 'right', color: '#fff', maxW: w - 100 });
+  const rows = LINES.filter((l) => l.chains[m.best]).map((l) => [l.chains[m.best], '×' + l.qty]);
+  rows.forEach(([n, qn], i) => {
+    const ry = y + 210 + i * 130;
+    txt(n, x + w - 60, ry, { size: 46, align: 'right', weight: 600 });
+    txt(qn, x + 60, ry, { size: 46, align: 'left', dir: 'ltr', color: C.muted });
+    ctx.fillStyle = C.line; ctx.fillRect(x + 50, ry + 62, w - 100, 3);
+  });
+  // "pay on the site" button with a lock
+  const by = y + 520;
+  ctx.fillStyle = C.coralDark; rr(x + 120, by, w - 240, 120, 60); ctx.fill();
+  txt('לתשלום — באתר עצמו', x + w / 2 + 45, by + 62, { size: 46, color: '#fff', maxW: 430 });
+  ctx.save(); ctx.translate(x + 172, by + 60);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 7; ctx.beginPath(); ctx.arc(0, -12, 16, Math.PI, 0); ctx.stroke();
+  ctx.fillStyle = '#fff'; rr(-24, -12, 48, 38, 6); ctx.fill(); ctx.restore();
+  txt('התשלום נעשה על ידך באתר, כמו תמיד', x + w / 2, by + 210, { size: 38, weight: 600, color: C.muted, maxW: w - 100 });
+  ctx.restore();
+}
+
+function sTrust(lt) {
+  cap('ובראש שקט:', 310, lt, 0, { size: 96, weight: 700 });
+  const items = ['התוסף לא משלם', 'לא רואה פרטי אשראי', 'עובד רק בשלושת האתרים', 'הנתונים נשארים אצלך'];
+  items.forEach((s, i) => {
+    const p = inFx(lt, 0.35 + i * 0.38, 0.6);
+    if (p <= 0) return;
+    const y = 470 + i * 230, x = 100 - (1 - p) * 260;
+    ctx.save(); ctx.globalAlpha *= p;
+    card(x, y, 880, 180, 30);
+    const ix = x + 880 - 100, iy = y + 90;
+    const k = eBack(P(lt, 0.5 + i * 0.38, 0.9 + i * 0.38));
+    ctx.save(); ctx.translate(ix, iy); ctx.scale(k, k);
+    ctx.fillStyle = i % 2 ? C.slate : C.coralDark; ctx.beginPath(); ctx.arc(0, 0, 52, 0, Math.PI * 2); ctx.fill();
+    check(0, 3, 54, '#fff', 10);
+    ctx.restore();
+    txt(s, x + 880 - 190, iy, { size: 60, align: 'right', maxW: 640 });
+    ctx.restore();
+  });
+}
+
+function sCTA(lt) {
+  const p = eBack(P(lt, 0.0, 0.7));
+  logo(W / 2, 560 + Math.sin(lt * 2) * 6, 400 * p, P(lt, 0, 0.3));
+  cap('סל חכם', 880, lt, 0.3, { size: 130, weight: 700, color: C.coralDark });
+  cap('חינם · קוד פתוח', 1015, lt, 0.6, { size: 74, weight: 700 });
+  const u = inFx(lt, 0.9, 0.6);
+  if (u > 0) {
+    ctx.save(); ctx.globalAlpha *= u; ctx.translate(0, (1 - u) * 40);
+    ctx.save(); shadow(30, 10, 0.2); ctx.fillStyle = C.slate; rr(50, 1110, 980, 110, 55); ctx.fill(); ctx.restore();
+    txt('github.com/Marku-a/Claude-Market-online', W / 2, 1167, { size: 46, color: '#fff', dir: 'ltr', maxW: 900, weight: 600 });
+    ctx.restore();
+  }
+  cap('מדריך התקנה בעברית ב-README', 1310, lt, 1.2, { size: 60, weight: 700 });
+  cap('תוסף ל-Chrome · לחצי חינם, רמי לוי ושופרסל', 1410, lt, 1.5, { size: 42, weight: 600, color: C.muted });
+}
+
+const SCENES = [
+  [sHook, 4.0], [sPain, 4.0], [sSolution, 4.6], [sCarts, 4.6], [sReview, 4.8],
+  [sResult, 4.8], [sCart, 4.0], [sTrust, 4.2], [sCTA, 4.4],
+];
+const DURATION = SCENES.reduce((a, [, d]) => a + d, 0);
+const FADE = 0.35;
+
+function draw(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  background(t);
+  let start = 0;
+  for (let i = 0; i < SCENES.length; i++) {
+    const [fn, d] = SCENES[i];
+    if (t < start + d || i === SCENES.length - 1) {
+      const lt = t - start;
+      ctx.save();
+      if (i < SCENES.length - 1 && lt > d - FADE) {
+        const q = eInOut(P(lt, d - FADE, d));
+        ctx.globalAlpha = 1 - q;
+        ctx.translate(W / 2, H / 2); ctx.scale(1 - 0.04 * q, 1 - 0.04 * q); ctx.translate(-W / 2, -H / 2);
+      }
+      fn(lt, d);
+      ctx.restore();
+      return;
+    }
+    start += d;
+  }
+}
+
+// ------------------------------------------------------------------ loading, preview, recording API
+const IMG = {};
+function load(src) {
+  return new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => bad(new Error('cannot load ' + src)); i.src = src; });
+}
+const ready = (async () => {
+  if (MODE === 'blank') return;
+  IMG.logo = await load('../assets/logo.png');
+  for (const k of ['list', 'review', 'result']) IMG[k] = await load('shots/' + k + '.png');
+  if (document.fonts) await document.fonts.ready;
+})();
+
+async function record({ bps = 2600000 } = {}) {
+  await ready;
+  const mime = ['video/mp4;codecs=avc1', 'video/mp4;codecs=avc1.42E01F', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
+  if (!mime) throw new Error('MediaRecorder: no MP4 support');
+  const stream = cv.captureStream(0);
+  const track = stream.getVideoTracks()[0];
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bps });
+  const chunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const stopped = new Promise((ok) => { rec.onstop = ok; });
+  rec.start(1000);
+  const N = Math.round(DURATION * FPS);
+  const t0 = performance.now();
+  let slowFrames = 0;
+  // one frame per 1/30 s of wall time; content time is frame-exact, so a slow frame only delays, never skips
+  for (let i = 0; i <= N; i++) {
+    draw(Math.min(i / FPS, DURATION));
+    track.requestFrame();
+    const wait = t0 + ((i + 1) * 1000) / FPS - performance.now();
+    if (wait > 0) await new Promise((ok) => setTimeout(ok, wait)); else slowFrames++;
+  }
+  rec.stop();
+  await stopped;
+  window.__blob = new Blob(chunks, { type: 'video/mp4' });
+  return { size: window.__blob.size, wall: (performance.now() - t0) / 1000, slowFrames, mime };
+}
+function chunk(offset, n) {
+  return new Promise((ok) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+    fr.readAsDataURL(window.__blob.slice(offset, offset + n));
+  });
+}
+async function renderPNG(t) { await ready; draw(t); return cv.toDataURL('image/png'); }
+
+window.REEL = { W, H, FPS, DURATION, draw, record, chunk, renderPNG, isReady: false };
+ready.then(() => {
+  window.REEL.isReady = true;
+  if (MODE !== 'preview') return;
+  const freeze = params.get('t');
+  if (freeze != null) { draw(Number(freeze)); return; }
+  const t0 = performance.now();
+  const loop = (now) => { draw(((now - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+}, (e) => { document.body.textContent = String(e); });
+</script>
+</body>
+</html>
