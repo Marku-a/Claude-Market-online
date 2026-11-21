@@ -15,8 +15,9 @@ every sentence true).
   cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
   verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
 - Passing: `npm test` (221), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
-- Regular Chrome: NOT yet verified. An earlier note said the user had run it there; a screenshot on 2026-11-21 showed the
-  extension was not loaded (Developer mode off), so that report was mistaken.
+- Regular Chrome (unpacked, user's own profile): the user ran real lists there on 2026-11-21 (screenshots of the
+  Rami Levy cart) and reports the version with back navigation / per-chain exclusion / stock warnings works
+  (user-reported, not observed by Claude).
 - Not yet verified: Hatzi Hinam `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
 - Product matching (engine) was fixed after a live run on 2026-11-21: Rami Levy had picked "אטריות ביצים" for
   "ביצים L 12" and the usual 9% cottage overrode "קוטג' 5%". Now only results close to the query compete, numbers the
