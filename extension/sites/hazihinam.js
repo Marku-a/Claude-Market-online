@@ -258,7 +258,7 @@ export function createAdapter(env) {
       return { ok: actual === q, qty: actual };
     },
 
-    // Endpoint taken from the site's own JS; not executed against the live site yet.
+    // Endpoint taken from the site's own JS; verified on a live guest cart 2026-11-21.
     async emptyCart() {
       assertPageSafe(meta, env);
       await del('/item/removeItemsInCart');

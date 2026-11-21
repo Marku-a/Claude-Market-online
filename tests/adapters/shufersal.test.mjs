@@ -269,3 +269,11 @@ test('unit price label: bare מ"ל / גרם mean per 100 (real site, 2026-11-21)
   const u = unitPriceOf(milk);
   assert.ok(u && Math.abs(u.value - 7.4) < 0.06, 'about ₪7.4 per litre, got ' + JSON.stringify(u));
 });
+
+test('cart line with miglog-cart-prod-notInStock is reported unavailable', () => {
+  const html = '<div><article class="miglog-prod miglog-incart miglog-cart-prod-" data-product-code="P_1" data-entry-number="0" data-entry-qty="1.0"><div class="miglog-prod-name">א</div></article>'
+    + '<article class="miglog-prod miglog-incart miglog-cart-prod-notInStock" data-product-code="P_2" data-entry-number="1" data-entry-qty="2.0"><div class="miglog-prod-name">ב</div></article></div>';
+  const lines = parseCartDoc(parseHtml(html));
+  assert.equal('available' in lines[0], false);
+  assert.equal(lines[1].available, false);
+});

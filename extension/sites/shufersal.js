@@ -91,13 +91,18 @@ export function parseCartDoc(doc) {
     if (!id || entryNumber === null || qty === null) {
       throw new AdapterError('SHAPE_CHANGED', 'cart entry lacks data-product-code/data-entry-number/data-entry-qty');
     }
-    lines.push({
+    const line = {
       id,
       name: text(el.querySelector('.miglog-prod-name')),
       qty,
       lineTotal: parsePrice(text(el.querySelector('.miglog-prod-totalPrize'))) ?? 0,
       entryNumber,
-    });
+    };
+    // The cart template sets class "miglog-cart-prod-<status>" (empty when in stock); the site's own CSS greys out
+    // "miglog-cart-prod-notInStock" and shows "חסר במלאי" (read from the live site's CSS and markup 2026-11-21;
+    // no real out-of-stock line was available to observe).
+    if ((el.getAttribute('class') || '').split(/[ \t\n]+/).includes('miglog-cart-prod-notInStock')) line.available = false;
+    lines.push(line);
   }
   return lines;
 }

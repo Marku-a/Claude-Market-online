@@ -14,11 +14,13 @@ every sentence true).
   diagnostics steps pass. A 2-item and a 3-item list ran through the extension UI with policy "keep": each site's own
   cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
   verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
-- Passing: `npm test` (281), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
+- Passing: `npm test` (282), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
 - Regular Chrome (unpacked, user's own profile): the user ran real lists there on 2026-11-21 (screenshots of the
   Rami Levy cart) and reports the version with back navigation / per-chain exclusion / stock warnings works
   (user-reported, not observed by Claude).
-- Not yet verified: Hatzi Hinam `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.
+- Not yet verified: a logged-in Shufersal account without a delivery address (guests work); a real Shufersal out-of-stock cart line (class read from the
+  site's CSS). Hatzi Hinam `emptyCart` verified on a guest cart 2026-11-21. `demo/build.mjs` needs an esbuild binary
+  (not on this machine) — not rebuilt since the new theme.
 - Product matching (engine) was fixed after a live run on 2026-11-21: Rami Levy had picked "אטריות ביצים" for
   "ביצים L 12" and the usual 9% cottage overrode "קוטג' 5%". Now only results close to the query compete, numbers the
   user wrote ("12", "5%") win over habit, and a "שונה" product never gets "הזול ביותר". Matching is still by name

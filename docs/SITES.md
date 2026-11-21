@@ -63,9 +63,14 @@ or capture, not re-run by us · **[S]** read in the site's own front-end JavaScr
   (+ `&cartContext%5Baction%5D=remove` when Q=0), **form body** `quantity=Q&CSRFToken=…` plus the `CSRFToken`
   header — works for set, change and remove [V 2026-11-20]. Entry numbers renumber after a removal — always re-read.
 - Totals: `GET /cart/cartsummary` HTML `.miglog-cart-summary-totalprice` equals the sum of the lines [V 2026-11-20].
+- Out of stock in the cart: the cart `<article>` gets class `miglog-cart-prod-notInStock` (in stock: `miglog-cart-prod-`
+  with an empty suffix); the site's CSS greys such a line and shows "חסר במלאי" [S 2026-11-21 — markup and CSS read
+  live, no real out-of-stock line observed]. Guest (logged-out) sessions can add to a cart [V 2026-11-21].
 - Delivery fee: `GET /timeSlot/preselection/getHomeDeliverySlots?amount=1.0&prescription=false` → slots with
   `price.value`; the minimum (₪35.90 on that date) equals the "דמי שירות במשלוח" the site shows [V 2026-11-20].
-  No minimum order [P]. Behaviour without a delivery address on the account: not tested (the account had one) [?].
+  No minimum order [P]. Without any delivery address (logged-out guest session) search still returns products as
+  `inStock` and they can be added to the cart [V 2026-11-21] — the old "everything shows out of stock" note was wrong
+  for guests; a logged-in account without an address was not tested.
 - Orders: `GET /my-account/orders` → `{activeOrders,closedOrders:[{code,createdString,totalPrice:{value}}]}`;
   `GET /my-account/orders/<code>` → `entries:[{quantity,basePrice:{value},product:{code,name,deliveryItem}}]`
   [V 2026-11-20: parses without error in the diagnostics].
@@ -85,7 +90,7 @@ or capture, not re-run by us · **[S]** read in the site's own front-end JavaScr
 - Add / set / remove: `POST /proxy/api/item/addItemToCart` `{"Object":{"ItemId":<id>,"Quantity":<q>,"Type":1,
   "IsCalculateCart":false}}` **sets the absolute quantity** (1→3→1→0 each read back exactly); `Quantity: 0` removes
   the line [V 2026-11-20]. Type 1 = units, 2 = kg [V].
-- Empty cart: `DELETE /proxy/api/item/removeItemsInCart` (no body) [S].
+- Empty cart: `DELETE /proxy/api/item/removeItemsInCart` (no body) — empties the whole cart [V 2026-11-21, guest cart].
 - Cart: `GET /proxy/api/item/getItemsInCart?SortBy=0&IsDescending=false` → `Results.CartItems.Items[]` (item shape +
   `Calculated_Price_NET`, `Cart:{Quantity}`); **`Items` is null when the cart is empty** [V 2026-11-20].
   Summary: `GET /proxy/api/order/cartSummary` → `Results.CartSummary:{Price_NET_TOTAL, Price_Shipping, Price_Savings,
