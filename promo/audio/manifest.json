@@ -1,0 +1,65 @@
+{
+ "vo-01.mp3": {
+  "id": "hook",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "dd14727de70a6ee3",
+  "text": "שופרסל, רמי לוי או חצי חינם? איפה הסל שלכם הכי זול?"
+ },
+ "vo-02.mp3": {
+  "id": "pain",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "c9ec4b209f95d5b4",
+  "text": "להשוות ידנית? זאת שעה של עבודה."
+ },
+ "vo-03.mp3": {
+  "id": "solution",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "ad2e3fb00455f474",
+  "text": "עם סל חכם, כותבים את רשימת הקניות פעם אחת."
+ },
+ "vo-04.mp3": {
+  "id": "carts",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "206cbf672a88559a",
+  "text": "התוסף ממלא עגלה אמיתית בכל אחד משלושת האתרים, בחשבון שלכם."
+ },
+ "vo-05.mp3": {
+  "id": "review",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "80eab1e5aca5e88d",
+  "text": "בודקים מה נבחר, מחליפים מוצר, או מדלגים עליו."
+ },
+ "vo-06.mp3": {
+  "id": "result",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "d89dce8a5a0210f0",
+  "text": "רואים מחיר אמיתי מהאתרים, כולל משלוח, והמשתלם מסומן."
+ },
+ "vo-07.mp3": {
+  "id": "cart",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "e6c982b7b045d841",
+  "text": "עוברים לעגלה, ומשלמים באתר, כרגיל."
+ },
+ "vo-08.mp3": {
+  "id": "trust",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "a0110938977659c3",
+  "text": "התוסף לא משלם, לא רואה פרטי אשראי, והנתונים נשארים אצלכם."
+ },
+ "vo-09.mp3": {
+  "id": "cta",
+  "voice": "he-IL-HilaNeural",
+  "rate": "+8%",
+  "hash": "3cde46d7da2c0acc",
+  "text": "סל חכם. חינם וקוד פתוח. קישור בתיאור."
+ }
+}

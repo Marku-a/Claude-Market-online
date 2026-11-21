@@ -6,3 +6,4 @@ plan.json
 report.md
 __pycache__/
 *.pyc
+promo/audio/music.wav

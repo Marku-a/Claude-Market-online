@@ -6,8 +6,10 @@
 <link rel="icon" href="data:,">
 <!--
   Source of promo/sal-hacham-reel.mp4. Everything is drawn on one <canvas> (1080x1920).
-  Open this file directly for a looping preview (add ?t=12.5 to freeze at a time).
-  tools/make-reel.mjs opens it with ?mode=record and records it with MediaRecorder.
+  Open this file directly for a looping preview (add ?t=12.5 to freeze at a time). The preview is silent.
+  tools/make-reel.mjs opens it with ?mode=record, fits the scene durations to the voice-over (REEL.setTiming;
+  audio/timing.js keeps the same timing for the preview) and records picture + sound with MediaRecorder.
+  Sound: reel-audio.js (voice clips, procedural music, analysis).
   UI screenshots in shots/ are of the real extension against the test mock sites (fictional prices).
 -->
 <style>
@@ -18,6 +20,8 @@
 <body>
 <canvas id="c" width="1080" height="1920"></canvas>
 <script src="shots/meta.js"></script>
+<script src="audio/timing.js"></script>
+<script src="reel-audio.js"></script>
 <script>
 'use strict';
 const W = 1080, H = 1920, FPS = 30;
@@ -423,11 +427,24 @@ function sCTA(lt) {
   cap('תוסף ל-Chrome · לחצי חינם, רמי לוי ושופרסל', 1410, lt, 1.5, { size: 42, weight: 600, color: C.muted });
 }
 
-const SCENES = [
-  [sHook, 4.0], [sPain, 4.0], [sSolution, 4.6], [sCarts, 4.6], [sReview, 4.8],
-  [sResult, 4.8], [sCart, 4.0], [sTrust, 4.2], [sCTA, 4.4],
+// Scene order, ids (= lines of voiceover.he.txt) and minimum durations (the animations need this long).
+// The real durations come from make-reel (longer where a voice clip needs it): REEL.setTiming(durations),
+// or audio/timing.js (written by make-reel) for the preview.
+const SCENE_DEFS = [
+  ['hook', sHook, 4.0], ['pain', sPain, 4.0], ['solution', sSolution, 4.6], ['carts', sCarts, 4.6], ['review', sReview, 4.8],
+  ['result', sResult, 4.8], ['cart', sCart, 4.0], ['trust', sTrust, 4.2], ['cta', sCTA, 4.4],
 ];
-const DURATION = SCENES.reduce((a, [, d]) => a + d, 0);
+const SCENE_IDS = SCENE_DEFS.map(([id]) => id);
+const BASE_DURATIONS = SCENE_DEFS.map(([, , d]) => d);
+let SCENES = [], DURATION = 0, STARTS = [];
+function setTiming(durations) {
+  SCENES = SCENE_DEFS.map(([, fn, d], i) => [fn, durations && Number.isFinite(durations[i]) ? durations[i] : d]);
+  STARTS = []; DURATION = 0;
+  for (const [, d] of SCENES) { STARTS.push(DURATION); DURATION += d; }
+  if (window.REEL) Object.assign(window.REEL, { DURATION, STARTS });
+  return { durations: SCENES.map(([, d]) => d), starts: STARTS, duration: DURATION };
+}
+setTiming(window.REEL_TIMING && window.REEL_TIMING.durations);
 const FADE = 0.35;
 
 function draw(t) {
@@ -465,42 +482,104 @@ const ready = (async () => {
   if (document.fonts) await document.fonts.ready;
 })();
 
-async function record({ bps = 2600000 } = {}) {
+// Records the canvas (captureStream) + the audio (music + voice clips, mixed in an AudioContext) in real time.
+// The animation is driven by the AudioContext clock, so picture and sound share one clock.
+//   voice: [{ clip, at, gain }]  clip index in REEL_AUDIO.clips, start time (s, reel timeline), linear gain
+//   duck:  [[on, off], ...]      music is lowered by duckDb inside these windows (150 ms ramps)
+async function record({ bps = 2600000, abps = 128000, voice = [], duck = [], duckDb = -11, music = true } = {}) {
   await ready;
-  const mime = ['video/mp4;codecs=avc1', 'video/mp4;codecs=avc1.42E01F', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
-  if (!mime) throw new Error('MediaRecorder: no MP4 support');
-  const stream = cv.captureStream(0);
-  const track = stream.getVideoTracks()[0];
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bps });
+  const AU = window.REEL_AUDIO;
+  const mime = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1.42E01F,mp4a.40.2'].find((m) => MediaRecorder.isTypeSupported(m));
+  if (!mime) throw new Error('MediaRecorder: no H.264 + AAC MP4 support');
+  const ac = new AudioContext({ sampleRate: AU.SR });
+  if (ac.state !== 'running') await ac.resume();
+  if (ac.state !== 'running') throw new Error('AudioContext did not start (' + ac.state + ')');
+  // the clock can stand still for a while after resume() (audio device start-up); the recorder's audio track
+  // only begins once audio flows, so start recording only after the clock really runs (else A/V drift apart)
+  const c0 = ac.currentTime, w0 = performance.now();
+  while (ac.currentTime - c0 < 0.3) {
+    if (performance.now() - w0 > 10000) throw new Error('AudioContext clock does not advance');
+    await new Promise((ok) => setTimeout(ok, 20));
+  }
+  const dest = ac.createMediaStreamDestination();
+  dest.channelCount = 2;
+  const lim = ac.createDynamicsCompressor(); // safety limiter only; levels are set so it rarely acts
+  lim.threshold.value = -1.5; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.1;
+  lim.connect(dest);
+  const musicGain = ac.createGain(); musicGain.connect(lim);
+  // captureStream(0) + requestFrame(): a frame is captured exactly when drawn. (captureStream(30) auto-capture
+  // lagged the audio by ~1 s in headless Chromium.)
+  const vtrack = cv.captureStream(0).getVideoTracks()[0];
+  const stream = new MediaStream([vtrack, ...dest.stream.getAudioTracks()]);
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bps, audioBitsPerSecond: abps });
   const chunks = [];
   rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
   const stopped = new Promise((ok) => { rec.onstop = ok; });
-  rec.start(1000);
-  const N = Math.round(DURATION * FPS);
-  const t0 = performance.now();
-  let slowFrames = 0;
-  // one frame per 1/30 s of wall time; content time is frame-exact, so a slow frame only delays, never skips
-  for (let i = 0; i <= N; i++) {
-    draw(Math.min(i / FPS, DURATION));
-    track.requestFrame();
-    const wait = t0 + ((i + 1) * 1000) / FPS - performance.now();
-    if (wait > 0) await new Promise((ok) => setTimeout(ok, wait)); else slowFrames++;
+  // warm-up: the first recording in a process stalls the page for ~1 s while the encoders start; do that
+  // with a throwaway recorder so the real one starts smoothly
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  {
+    const warm = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bps, audioBitsPerSecond: abps });
+    const done = new Promise((ok) => { warm.onstop = ok; });
+    warm.start(250);
+    for (let i = 0; i < 45; i++) { draw(0); vtrack.requestFrame(); await sleep(1000 / FPS); }
+    warm.stop(); await done;
   }
+  draw(0); vtrack.requestFrame();
+  rec.start(1000);
+  const T0 = ac.currentTime + 0.05;
+  if (music && AU.music) { const s = ac.createBufferSource(); s.buffer = AU.music; s.connect(musicGain); s.start(T0); }
+  const g = musicGain.gain, low = Math.pow(10, duckDb / 20), R = 0.15;
+  g.setValueAtTime(1, 0);
+  for (const [on, off] of duck) {
+    g.setValueAtTime(1, T0 + on - R); g.linearRampToValueAtTime(low, T0 + on);
+    g.setValueAtTime(low, T0 + off); g.linearRampToValueAtTime(1, T0 + off + R);
+  }
+  for (const v of voice) {
+    const s = ac.createBufferSource(), vg = ac.createGain();
+    s.buffer = AU.clips[v.clip]; vg.gain.value = v.gain; s.connect(vg); vg.connect(lim);
+    if (v.at >= 0) s.start(T0 + v.at); else s.start(T0, -v.at);
+  }
+  // AudioContext time, smoothed between render quanta
+  let lastCT = -1, lastPerf = 0, maxStall = 0, stallAt = 0;
+  const clock = () => {
+    const ct = ac.currentTime, p = performance.now();
+    if (ct !== lastCT) { if (lastCT >= 0 && p - lastPerf > maxStall) { maxStall = p - lastPerf; stallAt = ct - T0; } lastCT = ct; lastPerf = p; }
+    return ct + Math.min(0.05, (p - lastPerf) / 1000) - T0;
+  };
+  const wall0 = performance.now();
+  // one frame per 1/30 s slot of the audio clock; each frame shows the exact clock time it is drawn at
+  let frames = 0, slowFrames = 0, k = -1;
+  for (;;) {
+    const t = clock();
+    if (t >= DURATION) break;
+    const slot = Math.round(t * FPS);
+    if (slot !== k) {
+      draw(Math.max(0, t)); vtrack.requestFrame(); frames++;
+      if (k >= 0 && slot - k > 1) slowFrames += slot - k - 1;
+      k = slot;
+    }
+    await sleep(Math.max(1, ((k + 1) / FPS - clock()) * 1000));
+  }
+  draw(DURATION); vtrack.requestFrame();
+  await sleep(300);
   rec.stop();
   await stopped;
-  window.__blob = new Blob(chunks, { type: 'video/mp4' });
-  return { size: window.__blob.size, wall: (performance.now() - t0) / 1000, slowFrames, mime };
+  await ac.close();
+  AU.blobs.video = new Blob(chunks, { type: 'video/mp4' });
+  return { size: AU.blobs.video.size, wall: (performance.now() - wall0) / 1000, frames, slowFrames, mime, audioTracks: dest.stream.getAudioTracks().length, clockStall: { ms: Math.round(maxStall), at: stallAt } };
 }
-function chunk(offset, n) {
+function chunk(offset, n, name = 'video') {
   return new Promise((ok) => {
     const fr = new FileReader();
     fr.onload = () => ok(String(fr.result).split(',')[1] || '');
-    fr.readAsDataURL(window.__blob.slice(offset, offset + n));
+    fr.readAsDataURL(window.REEL_AUDIO.blobs[name].slice(offset, offset + n));
   });
 }
+const blobSize = (name) => window.REEL_AUDIO.blobs[name].size;
 async function renderPNG(t) { await ready; draw(t); return cv.toDataURL('image/png'); }
 
-window.REEL = { W, H, FPS, DURATION, draw, record, chunk, renderPNG, isReady: false };
+window.REEL = { W, H, FPS, DURATION, STARTS, SCENE_IDS, BASE_DURATIONS, FADE, setTiming, draw, record, chunk, blobSize, renderPNG, ready, isReady: false };
 ready.then(() => {
   window.REEL.isReady = true;
   if (MODE !== 'preview') return;

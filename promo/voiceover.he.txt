@@ -1,0 +1,13 @@
+# Hebrew voice-over for promo/sal-hacham-reel.mp4: one line per scene, "<scene id>: <text>".
+# Read by tools/make-reel.mjs, spoken by Microsoft's online neural TTS (edge-tts). Written for TTS:
+# no niqqud, short sentences, the brand spelled "סל חכם", no URL read aloud.
+# Edit a line and run make-reel again: only changed lines are sent to the TTS service again.
+hook: שופרסל, רמי לוי או חצי חינם? איפה הסל שלכם הכי זול?
+pain: להשוות ידנית? זאת שעה של עבודה.
+solution: עם סל חכם, כותבים את רשימת הקניות פעם אחת.
+carts: התוסף ממלא עגלה אמיתית בכל אחד משלושת האתרים, בחשבון שלכם.
+review: בודקים מה נבחר, מחליפים מוצר, או מדלגים עליו.
+result: רואים מחיר אמיתי מהאתרים, כולל משלוח, והמשתלם מסומן.
+cart: עוברים לעגלה, ומשלמים באתר, כרגיל.
+trust: התוסף לא משלם, לא רואה פרטי אשראי, והנתונים נשארים אצלכם.
+cta: סל חכם. חינם וקוד פתוח. קישור בתיאור.
