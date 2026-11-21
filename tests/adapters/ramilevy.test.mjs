@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import adapterDefault, {
-  createAdapter, parseSearch, parseCart, parseCustomer, parseOrderList, parseOrderDetail, parseItemsInfo, _resetCache,
+  createAdapter, parseSearch, parseCart, parseCustomer, parseOrderList, parseOrderDetail, parseItemsInfo, parseAvailability, _resetCache,
 } from '../../extension/sites/ramilevy.js';
 import { fixture, startMock, makeEnv, ramyStorage, leaks } from './helpers.mjs';
 import { RL_TOKEN } from '../e2e/mocks/server.mjs';
@@ -50,7 +50,8 @@ test('parseCart / parseCustomer', () => {
   const c = parseCustomer(fixture('ramilevy-customer.json'));
   assert.deepEqual(c.items, { 425127: 1, 100001: 2 }); // real site: numbers (verified 2026-11-20)
   assert.equal(c.deliveryFee, null); // deliveryTimesCustomer is null before a slot is chosen
-  assert.equal(c.storeId, '331');
+  assert.equal(c.storeId, null); // the account's own store_id is NOT the delivery store (verified 2026-11-21)
+  assert.equal(parseCustomer({ user: { store_id: '179' }, deliveryTimesCustomer: { store_id: 5, price: 1 }, cart: null }).storeId, 5);
   assert.equal(parseCustomer({ user: {}, cart: null }).items && Object.keys(parseCustomer({ user: {}, cart: null }).items).length, 0);
   assert.equal(parseCustomer({ user: {}, deliveryTimesCustomer: { store_id: 5, price: 29.9 }, cart: null }).deliveryFee, 29.9);
   assert.deepEqual(parseCustomer({ user: {}, cart: { items: [] } }).items, {});
@@ -260,6 +261,63 @@ test('diagnose returns redacted shapes only', async () => {
     assert.deepEqual(Object.keys(d[1].shape).sort(), ['data', 'q', 'status', 'total']);
     assert.match(JSON.stringify(d[1].shape), /<string:\d+>/);
     assert.equal(JSON.stringify(d).includes('חלב'), false);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('parseAvailability: available = cart store in available_in; no available_in = unknown', () => {
+  const m = parseAvailability({ status: 200, total: 3, data: [
+    { id: 1, available_in: [82, 331] }, { id: 2, available_in: ['82'] }, { id: 3 }, null,
+  ] }, 331);
+  assert.equal(m.get('1'), true);
+  assert.equal(m.get('2'), false);
+  assert.equal(m.has('3'), false);
+  assert.equal(parseAvailability({ data: [{ id: 2, available_in: ['82'] }] }, '82').get('2'), true);
+  assert.throws(() => parseAvailability({ foo: 1 }, 331), (e) => e.code === 'SHAPE_CHANGED');
+});
+
+test('getCart marks a line the cart store cannot supply as available:false (one /api/items call)', async () => {
+  const { mock, a, state } = await setup((s) => { s.ramilevy.cart = { 100001: '1.00', 100003: '2.00' }; }); // soya: only store 82
+  try {
+    const cart = await a.getCart();
+    const by = Object.fromEntries(cart.lines.map((l) => [l.id, l]));
+    assert.equal(by['100003'].available, false);
+    assert.equal('available' in by['100001'], false); // in stock: field absent
+    // the real site leaves the unavailable line out of the priced response: it is reported from the stored cart
+    assert.equal(by['100003'].lineTotal, 0);
+    assert.equal(by['100003'].qty, 2);
+    assert.ok(by['100003'].name.length > 0, 'name comes from /api/items');
+    assert.equal(cart.itemsTotal, by['100001'].lineTotal); // the site's own total, untouched by us
+    const items = state.requests.filter((r) => r.path === '/api/items');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].host, 'www.rami-levy.co.il');
+    assert.equal(items[0].method, 'POST');
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('getCart: availability lookup failing never throws; lines the site left out are still unavailable', async () => {
+  const { mock, a } = await setup((s) => { s.ramilevy.cart = { 100003: '1.00' }; s.ramilevy.itemsFail = true; });
+  try {
+    const cart = await a.getCart();
+    // the lookup failed, but the line the site left out of the priced cart is still reported as unavailable
+    assert.equal(cart.lines.length, 1);
+    assert.equal(cart.lines[0].available, false);
+    assert.equal(cart.lines[0].id, '100003');
+    assert.equal(cart.itemsTotal, 0);
+  } finally {
+    await mock.close();
+  }
+});
+
+test('getCart: an empty cart makes no availability call', async () => {
+  const { mock, a, state } = await setup();
+  try {
+    assert.deepEqual((await a.getCart()).lines, []);
+    assert.ok(!state.requests.some((r) => r.path === '/api/items'));
   } finally {
     await mock.close();
   }

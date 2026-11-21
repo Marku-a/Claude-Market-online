@@ -1,7 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildProfile } from '../../extension/engine/profile.js';
-import { matchLine, applyDiscounts, summarize, recommend } from '../../extension/engine/compare.js';
+import {
+  matchLine, applyDiscounts, summarize, recommend, runLine, REASON_REMOVED, REASON_UNAVAILABLE,
+} from '../../extension/engine/compare.js';
 import { parseListLine } from '../../extension/engine/text.js';
 import { chooseForLine } from '../../extension/engine/choose.js';
 import { TODAY, order, cand, MILK } from './helpers.mjs';
@@ -285,8 +287,100 @@ describe('real-site regressions (2026-11-21)', () => {
     assert.equal(chooseForLine(L('ביצים'), res, p).product.name, 'מארז 18 ביצים L'); // no number: the usual one
   });
 
+  test('a product missing one of the words the user wrote is badged different', () => {
+    const p = buildProfile([], TODAY);
+    const m = matchLine(L('תבניות ביצים'), {
+      hazihinam: [cand('a', 'תבניות אלומיניום + מכסים 10 במארז', 9.9)],
+      ramilevy: [cand('e', 'מארז 30 ביצים תבנית L', 29.9, { chain: 'ramilevy' })],
+    }, p);
+    assert.equal(m.chains.hazihinam.match, 'different');
+    assert.equal(m.chains.ramilevy.match, 'similar'); // "תבנית" ~ "תבניות", "ביצים" present
+    assert.equal(matchLine(L('ביצים'), { shufersal: [cand('s', 'ביצי חופש L', 22)] }, p).chains.shufersal.match, 'similar');
+  });
+
   test("a 'different' product is never the line's cheapest", () => {
     const s = summarize({ hazihinam: run([['identical', 21.7]]), ramilevy: run([['different', 8]]), shufersal: run([['similar', 21.81]]) }, {});
     assert.deepEqual(s.perLineCheapest.map((x) => x.chain), ['hazihinam']);
+  });
+});
+
+describe('runLine (plan entry after filling -> chainRuns line)', () => {
+  const entry = (kw = {}) => ({ product: cand('p1', 'תבניות ביצים', 9), match: 'similar', qty: 2, lineTotal: 18, missingReason: null, ...kw });
+  const item = (kw = {}) => ({ actualQty: 2, existingQty: 0, share: 17, ...kw });
+  const cart = (lines) => ({ lines, itemsTotal: 17 });
+
+  test('in the cart: our share of the site price', () => {
+    const l = runLine('תבניות', entry(), item(), cart([{ id: 'p1', name: 'x', qty: 2, lineTotal: 17 }]));
+    assert.deepEqual(l, { line: 'תבניות', match: 'similar', product: entry().product, qty: 2, lineTotal: 17, missingReason: null });
+    assert.equal(runLine('a', entry(), item({ share: null }), null).lineTotal, 18); // no re-read cart: estimate
+  });
+
+  test('excluded by the user at this chain: missing with reason "removed", even if still in the cart', () => {
+    const l = runLine('a', entry({ excluded: true }), null, cart([{ id: 'p1', qty: 2, lineTotal: 17 }]));
+    assert.equal(l.match, 'missing');
+    assert.equal(l.product, null);
+    assert.equal(l.lineTotal, 0);
+    assert.equal(l.missingReason, REASON_REMOVED);
+    assert.equal(REASON_REMOVED, 'הוסר על ידך');
+  });
+
+  test('the site reports the cart line unavailable: missing, out-of-stock reason, product name kept', () => {
+    const l = runLine('a', entry(), item(), cart([{ id: 'p1', name: 'תבנית אלומיניום', qty: 2, lineTotal: 17, available: false }]));
+    assert.equal(l.match, 'missing');
+    assert.equal(l.missingReason, REASON_UNAVAILABLE);
+    assert.equal(REASON_UNAVAILABLE, 'אזל במלאי באתר');
+    assert.equal(l.name, 'תבנית אלומיניום');
+    // available true / absent = in stock
+    assert.equal(runLine('a', entry(), item(), cart([{ id: 'p1', qty: 2, lineTotal: 17, available: true }])).match, 'similar');
+  });
+
+  test('not added / not in the re-read cart / nothing chosen', () => {
+    assert.equal(runLine('a', entry(), null, null).match, 'missing');
+    assert.equal(runLine('a', entry(), item(), cart([])).match, 'missing');
+    assert.equal(runLine('a', entry(), item({ actualQty: 3, existingQty: 3 }), cart([{ id: 'p1', qty: 3 }])).match, 'missing');
+    const none = runLine('a', entry({ product: null, match: 'missing', missingReason: 'לא נמצא באתר' }), null, null);
+    assert.equal(none.missingReason, 'לא נמצא באתר');
+  });
+});
+
+describe('removed and out-of-stock lines in summary and recommendation', () => {
+  const OOS_REASON = 'ייתכן שהסכום באתר כולל מוצרים שאזלו';
+  const withReason = (r, i, reason, name) => {
+    r.lines[i].missingReason = reason;
+    if (name) r.lines[i].name = name;
+    return r;
+  };
+
+  test('a line removed at one chain is priced at the cheapest other chain, like a missing line', () => {
+    const s = summarize({
+      hazihinam: withReason(run([['missing', 0], ['identical', 10]], cartOf(10)), 0, REASON_REMOVED),
+      ramilevy: run([['similar', 5], ['identical', 11]], cartOf(16)),
+      shufersal: run([['similar', 6], ['identical', 12]], cartOf(18)),
+    }, {});
+    assert.equal(s.chains.hazihinam.missingCount, 1);
+    assert.equal(s.chains.hazihinam.removedCount, 1);
+    assert.deepEqual(s.chains.hazihinam.unavailable, []);
+    assert.equal(s.lines[0].chains.hazihinam.missingReason, REASON_REMOVED);
+    const r = recommend(s);
+    const hz = r.ranking.find((x) => x.chain === 'hazihinam');
+    assert.equal(hz.adjustedFinal, 15); // 10 + the cheapest other chain's line (5)
+    assert.equal(r.best, 'hazihinam');
+    assert.ok(!hz.reasons.includes(OOS_REASON));
+  });
+
+  test('out of stock: listed by name, not compared, the site total is NOT reduced, reason added', () => {
+    const s = summarize({
+      ramilevy: withReason(run([['missing', 0], ['identical', 11]], cartOf(20)), 0, REASON_UNAVAILABLE, 'ביצים L'),
+      shufersal: run([['similar', 9], ['identical', 12]], cartOf(21)),
+    }, {});
+    const rl = s.chains.ramilevy;
+    assert.deepEqual(rl.unavailable, [{ line: 'l0', name: 'ביצים L' }]);
+    assert.equal(rl.itemsTotal, 20); // the site's own total, untouched
+    assert.equal(rl.missingCount, 1);
+    assert.equal(rl.removedCount, 0);
+    assert.equal(rl.comparableTotal, 11); // only the line present in both chains
+    const r = recommend(s);
+    assert.ok(r.ranking.find((x) => x.chain === 'ramilevy').reasons.includes(OOS_REASON));
+    assert.ok(!r.ranking.find((x) => x.chain === 'shufersal').reasons.includes(OOS_REASON));
   });
 });

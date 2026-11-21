@@ -233,3 +233,27 @@ test('diagnose: structure only, every step ok', async () => {
     await mock.close();
   }
 });
+
+test('parseCartLines: IsInStock false -> available:false; true or absent -> no field', () => {
+  const lines = parseCartLines({ Results: { CartItems: { Items: [
+    { Id: 1, Name: 'a', Price_NET: 2, Cart: { Quantity: 1 }, IsInStock: false },
+    { Id: 2, Name: 'b', Price_NET: 2, Cart: { Quantity: 1 }, IsInStock: true },
+    { Id: 3, Name: 'c', Price_NET: 2, Cart: { Quantity: 1 } },
+  ] } } });
+  assert.equal(lines[0].available, false);
+  assert.equal('available' in lines[1], false);
+  assert.equal('available' in lines[2], false);
+});
+
+test('getCart: an out-of-stock item already in the cart is reported available:false', async () => {
+  const { mock, a } = await setup((s) => { s.hazihinam.cart = { 7357: 1, 7359: 2 }; }); // 7359 soya: IsInStock false
+  try {
+    const cart = await a.getCart();
+    const by = Object.fromEntries(cart.lines.map((l) => [l.id, l]));
+    assert.equal(by['7359'].available, false);
+    assert.equal('available' in by['7357'], false);
+    assert.equal(cart.itemsTotal, 26); // 6.2 + 2 x 9.9 - the site's own total, untouched
+  } finally {
+    await mock.close();
+  }
+});

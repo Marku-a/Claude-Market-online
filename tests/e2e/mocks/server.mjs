@@ -7,6 +7,9 @@
 //   state.shufersal.variant = 'shape-changed'; // search returns {foo:1}
 //   state.<chain>.redirectTo = '/some/path';   // the chain's cart-write endpoint answers 302 -> that path
 //   state.hazihinam.errorMarker = 'X';         // /user/info answers an error whose description is X
+//   state.ramilevy.itemsFail = true;           // POST /api/items (catalog details, stock per store) answers 500
+//   catalog items: Rami Levy available_in without 331 = out of stock at the cart store; Hatzi Hinam IsInStock:false
+//   (put such an item straight into state.<chain>.cart to model a pre-existing cart line that ran out)
 //   state.forbiddenHits / state.requests       // recorded traffic
 
 export const HOSTS = {
@@ -67,6 +70,7 @@ export function createState() {
       minOrder: null,
       variant: null,
       redirectTo: null,
+      itemsFail: false,
     },
     shufersal: {
       loggedIn: true,
@@ -170,13 +174,15 @@ export function createMockSites(state = createState()) {
     const bearer = String(req.headers.authorization || '').replace(/^Bearer /, '');
     return s.loggedIn && bearer === s.user.token;
   }
-  function rlPrice(items) {
+  function rlPrice(items, store) {
     const s = S.ramilevy;
     const lines = [];
     let total = 0;
     for (const [id, q] of Object.entries(items)) {
       const p = s.catalog.find((c) => String(c.id) === String(id));
       if (!p) continue;
+      // real site: a line the store cannot supply is left out of the priced response (verified 2026-11-21)
+      if (store != null && Array.isArray(p.available_in) && !p.available_in.map(Number).includes(Number(store))) continue;
       const qty = Number(q);
       const t = round2(p.price.price * qty);
       total += t;
@@ -212,7 +218,7 @@ export function createMockSites(state = createState()) {
     if (p === '/api/v2/cart' && req.method === 'POST') {
       if (s.redirectTo) return send(res, 302, '', { ...cors, location: s.redirectTo });
       const items = json.items && typeof json.items === 'object' ? json.items : {};
-      const out = rlPrice(items);
+      const out = rlPrice(items, json.store);
       // Persist only with a valid bearer AND the ecomtoken header (SITES.md); otherwise it only prices.
       if (rlAuth(req) && req.headers.ecomtoken === s.user.token) s.cart = { ...items };
       return send(res, 200, out, cors);
@@ -250,6 +256,8 @@ export function createMockSites(state = createState()) {
       }, cors);
     }
     if (p === '/api/items' && req.method === 'POST') {
+      if (s.itemsFail) return send(res, 500, { message: 'Server Error' }, cors);
+      // real shape: the catalog item, including available_in (store ids that can supply it)
       const want = String(json.ids ?? '').split(',').filter(Boolean);
       const data = s.catalog.filter((c) => want.includes(String(c.id)));
       return send(res, 200, { status: 200, total: data.length, data }, cors);

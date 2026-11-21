@@ -1,5 +1,5 @@
 // Cross-chain matching, totals, personal discounts, recommendation (SPEC section 6).
-import { similarity, productKey, queryNumbers, hasAllNumbers } from './text.js';
+import { similarity, productKey, queryNumbers, hasAllNumbers, coversQueryWords } from './text.js';
 import { chooseForLine, lineCost } from './choose.js';
 
 const r2 = (x) => Math.round((x + Math.sign(x) * 1e-9) * 100) / 100;
@@ -46,7 +46,10 @@ export function matchLine(parsedLine, resultsByChain, profile) {
       if (ch.status === 'missing') {
         entry = { match: 'missing', product: null, reasons: ch.reasons, alternatives: [], missingReason: ch.missingReason };
       } else {
-        const match = !reference || similarity(ch.product.name, reference.name) >= 0.5 ? 'similar' : 'different';
+        // A product that lacks one of the user's words is 'different' even with no reference: "תבניות ביצים" (egg trays)
+        // matched aluminium baking trays at two chains, badged "דומה" (seen live, 2026-11-21).
+        const close = !reference || similarity(ch.product.name, reference.name) >= 0.5;
+        const match = close && coversQueryWords(parsedLine.query, ch.product.name) ? 'similar' : 'different';
         entry = { match, product: ch.product, reasons: ch.reasons, alternatives: ch.alternatives, missingReason: null };
       }
     }
@@ -83,7 +86,36 @@ export function applyDiscounts(itemsTotal, discounts) {
   return { discountTotal, afterDiscount: r2(Math.max(itemsTotal - discountTotal, 0)), applied };
 }
 
-// chainRuns: {chain: {status, lines:[{line, match, product, qty, lineTotal}], cart: CartView|null}}
+// Why a chain's line is 'missing' when the reason is not the search itself.
+export const REASON_REMOVED = 'הוסר על ידך'; // the user chose "לא לקנות כאן" for this chain
+export const REASON_UNAVAILABLE = 'אזל במלאי באתר'; // in the cart, but the site says it cannot supply it
+
+// One plan entry of one chain after filling -> chainRuns line.
+//   query: line label; entry: plan.lines[i].chains[chain] {product, match, qty, lineTotal, excluded?, missingReason};
+//   item: the fill item for that line {actualQty, existingQty, share} or null;
+//   rawCart: the re-read CartView or null.
+// CartView = { lines: [{ id, name, qty, lineTotal, available? }], itemsTotal, deliveryFee|null, grandTotal|null,
+//              minOrder|null }; `available: false` only when the site says it cannot supply the line (else absent).
+// -> { line, match, product, qty, lineTotal, missingReason, name? (product name, only when unavailable) }
+export function runLine(query, entry, item, rawCart) {
+  const miss = (missingReason) => ({ line: query, match: 'missing', product: null, qty: entry.qty, lineTotal: 0, missingReason });
+  if (entry.excluded) return miss(REASON_REMOVED);
+  if (!entry.product) return miss(entry.missingReason || null);
+  const lines = rawCart && Array.isArray(rawCart.lines) ? rawCart.lines : null;
+  const cl = lines ? lines.find((x) => String(x.id) === String(entry.product.id)) : null;
+  // Out of stock at the site first: Rami Levy keeps such a line in the stored cart but prices it at 0 units, so the
+  // "none of our units" test below would hide why it is missing (verified 2026-11-21).
+  if (cl && cl.available === false) return { ...miss(REASON_UNAVAILABLE), name: cl.name || entry.product.name };
+  // missing = not in the re-read cart, or none of our units were added
+  if (!item || (lines && !cl) || item.actualQty - item.existingQty <= 0) return miss(null);
+  // Our share of the price the site itself charges for this line (after its own promotions).
+  return {
+    line: query, match: entry.match, product: entry.product, qty: entry.qty,
+    lineTotal: item.share ?? entry.lineTotal, missingReason: null,
+  };
+}
+
+// chainRuns: {chain: {status, lines:[{line, match, product, qty, lineTotal, missingReason?}], cart: CartView|null}}
 // profile: user Profile {discounts, deliveryOverrides}
 export function summarize(chainRuns, profile) {
   const prof = profile || {};
@@ -120,6 +152,10 @@ export function summarize(chainRuns, profile) {
       minOrder,
       belowMinimum: minOrder != null && itemsTotal < minOrder,
       missingCount: lines.filter((l) => l.match === 'missing').length,
+      removedCount: lines.filter((l) => l.match === 'missing' && l.missingReason === REASON_REMOVED).length,
+      // in the cart but the site cannot supply them; the site's itemsTotal is NOT reduced (we cannot know
+      // whether the site counts them) - they are only excluded from the line-by-line comparison
+      unavailable: lines.filter((l) => l.match === 'missing' && l.missingReason === REASON_UNAVAILABLE).map((l) => ({ line: l.line, name: l.name || l.line })),
       differentCount: lines.filter((l) => l.match === 'different').length,
       comparableTotal: 0,
     };
@@ -133,8 +169,8 @@ export function summarize(chainRuns, profile) {
       const l = lineAt(c, i);
       if (l && label == null) label = l.line;
       per[c] = l
-        ? { match: l.match, product: l.product || null, qty: l.qty, lineTotal: l.lineTotal || 0 }
-        : { match: 'missing', product: null, qty: 0, lineTotal: 0 };
+        ? { match: l.match, product: l.product || null, qty: l.qty, lineTotal: l.lineTotal || 0, missingReason: l.missingReason || null }
+        : { match: 'missing', product: null, qty: 0, lineTotal: 0, missingReason: null };
     }
     lines.push({ line: label, chains: per });
   }
@@ -183,6 +219,7 @@ export function recommend(summary) {
     if (s.itemsTotal <= 0) reasons.push('העגלה ריקה — אף מוצר לא נמצא');
     if (s.missingCount === 1) reasons.push('חסר מוצר אחד — הושלם במחיר מהרשת הזולה לצורך ההשוואה');
     else if (s.missingCount > 1) reasons.push(`חסרים ${s.missingCount} מוצרים — הושלמו במחיר מהרשת הזולה לצורך ההשוואה`);
+    if (s.unavailable && s.unavailable.length) reasons.push('ייתכן שהסכום באתר כולל מוצרים שאזלו');
     if (s.differentCount > 0) reasons.push(`${s.differentCount} מוצרים שונים ממה שרגילים לקנות`);
     if (s.belowMinimum) reasons.push('מתחת למינימום הזמנה');
     if (s.deliveryFeeUnknown) reasons.push('דמי משלוח לא ידועים — לא נכללו בסכום');

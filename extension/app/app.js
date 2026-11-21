@@ -1,6 +1,7 @@
 // Full-tab UI. All user/site text is inserted as text nodes only.
 import { CHAINS } from '../sites/registry.js';
 import { createRunner, estimateTotals } from './orchestrator.js';
+import { REASON_REMOVED } from '../engine/compare.js';
 import { store } from './store.js';
 import { rpc, openSite, closeWorkers } from './rpc.js';
 
@@ -20,6 +21,7 @@ const ERRORS = {
 };
 const errText = (code) => ERRORS[code] || ERRORS.NETWORK;
 const MATCH_TEXT = { identical: 'זהה', similar: 'דומה', different: 'שונה', missing: 'חסר' };
+const REMOVED_TEXT = REASON_REMOVED; // "הוסר על ידך"
 
 const S = {
   step: 'settings',
@@ -32,6 +34,9 @@ const S = {
   progress: {},
   fillResults: null,
   final: null,
+  reached: 0, // furthest step index the user may click back/forward to without redoing anything
+  busy: false, // a site action is running: no navigation until it ends
+  planKey: null, // list text + chains the current plan was built for
 };
 
 const $ = (id) => document.getElementById(id);
@@ -64,14 +69,45 @@ function defaultProfile() {
   return { address: { city: '', street: '', number: '' }, discounts: [], deliveryOverrides: {}, existingCartPolicy: 'ask' };
 }
 
-function go(step) {
+// Steps bar: every step already reached is a real button (keyboard reachable); the active one has aria-current.
+// Navigating never starts a site action by itself - the views below reuse what they already have.
+function drawSteps() {
+  const cur = STEP_KEYS.indexOf(S.step);
+  $('steps').replaceChildren(...STEPS.map((t, i) => {
+    const label = `${i + 1}. ${t}`;
+    const current = i === cur ? 'step' : null;
+    if (i > S.reached) return h('li', null, h('span', { class: 'step', 'aria-current': current }, label));
+    return h('li', null, btn(label, () => go(STEP_KEYS[i]), {
+      class: 'step', 'aria-current': current, 'data-testid': 'nav-' + STEP_KEYS[i], disabled: S.busy,
+    }));
+  }));
+  $('btn-settings').disabled = S.busy;
+  const back = $('btn-back');
+  if (back) back.disabled = S.busy;
+}
+
+function setBusy(b) {
+  S.busy = b;
+  drawSteps();
+}
+
+// The result shown no longer matches the plan (or the plan was rebuilt): the user must fill again to see it.
+function invalidateFrom(step) {
+  S.reached = Math.min(S.reached, STEP_KEYS.indexOf(step) - 1);
+  drawSteps();
+}
+
+function go(step, opts = {}) {
+  if (S.busy) return;
   S.step = step;
-  const ol = $('steps');
-  ol.replaceChildren(...STEPS.map((t, i) => h('li', { 'aria-current': STEP_KEYS[i] === step ? 'step' : null }, `${i + 1}. ${t}`)));
+  S.reached = Math.max(S.reached, STEP_KEYS.indexOf(step));
   const main = $('main');
   main.replaceChildren(h('div', { 'data-testid': 'step-' + step }));
   const box = main.firstChild;
-  ({ settings: viewSettings, connect: viewConnect, list: viewList, review: viewReview, result: viewResult })[step](box);
+  const idx = STEP_KEYS.indexOf(step);
+  if (idx > 0) put(box, btn('→ חזרה', () => go(STEP_KEYS[idx - 1]), { class: 'back', id: 'btn-back', 'data-testid': 'btn-back' }));
+  drawSteps();
+  ({ settings: viewSettings, connect: viewConnect, list: viewList, review: viewReview, result: viewResult })[step](box, opts);
   main.focus();
 }
 
@@ -173,9 +209,12 @@ const STATE_TEXT = (c) => {
 };
 
 async function runConnect() {
+  const before = connected().join(',');
   S.conn = {};
   drawConnect();
   S.conn = await runner.connect({ onProgress: () => {} });
+  // other chains connected now: the plan must be rebuilt, so the later steps are not reachable directly
+  if (S.plan && connected().join(',') !== before) invalidateFrom('review');
   drawConnect();
 }
 
@@ -183,7 +222,9 @@ function viewConnect(box) {
   put(box, h('h2', { text: 'חיבור לאתרים' }),
     h('p', { class: 'lead', text: 'מתחברים באתר עצמו. התוסף לא רואה ולא שומר את הסיסמה.' }),
     h('div', { id: 'connect-body' }));
-  runConnect();
+  // Coming back here shows the last check; "בדוק שוב" checks again.
+  if (IDS.every((c) => S.conn[c])) drawConnect();
+  else runConnect();
 }
 
 function drawConnect() {
@@ -227,12 +268,21 @@ async function viewList(box) {
       refreshChips();
     }, { title: s.reason })));
   };
-  area.addEventListener('input', () => { S.listText = area.value; clearTimeout(timer); timer = setTimeout(refreshChips, 400); });
+  area.addEventListener('input', () => {
+    S.listText = area.value;
+    // a different list needs a new search: the review/result of the old list are no longer reachable directly
+    if (S.plan && planKey() !== S.planKey && S.reached > STEP_KEYS.indexOf('list')) invalidateFrom('review');
+    clearTimeout(timer); timer = setTimeout(refreshChips, 400);
+  });
   put(box, h('h2', { text: 'מה לקנות?' }),
     h('p', { class: 'lead', text: 'מוצר בכל שורה. אפשר לכתוב כמות בהתחלה, למשל "2 חלב".' }),
     h('label', { for: 'list-input', text: 'רשימת קניות' }), area,
     h('div', { class: 'actions' },
-      btn('השתמש ברשימה האחרונה', () => { if (last) { area.value = last; refreshChips(); } }, { disabled: !last }),
+      btn('השתמש ברשימה האחרונה', () => {
+        if (!last) return;
+        area.value = last;
+        area.dispatchEvent(new Event('input'));
+      }, { disabled: !last }),
       primary('בנה והשווה', () => {
         S.listText = area.value;
         if (!area.value.trim()) { live('הרשימה ריקה'); area.focus(); return; }
@@ -253,6 +303,9 @@ function drawProgress(el, ids) {
   el.replaceChildren(...ids.filter((c) => S.progress[c]).map((c) => progressRow(c, S.progress[c])));
 }
 
+const planKey = () => JSON.stringify([S.listText, connected()]);
+const REVIEW_LEAD = 'זה מה שנבחר בכל אתר. אפשר להחליף מוצר, לשנות כמות, להוריד שורה או לא לקנות מוצר באתר מסוים, ואז למלא את העגלות.';
+
 async function viewReview(box) {
   const ids = connected();
   const lead = h('p', { class: 'lead', text: 'מחפשים כל מוצר בכל אתר…' });
@@ -260,24 +313,43 @@ async function viewReview(box) {
   const prog = h('div');
   const body = h('div');
   put(box, prog, body);
+  // Same list and chains as the plan we have: show it as the user left it (choices, quantities, exclusions).
+  if (S.plan && S.planKey === planKey()) {
+    lead.textContent = REVIEW_LEAD;
+    drawReview(body);
+    return;
+  }
   S.progress = {};
   const onProgress = (p) => {
     S.progress[p.chain] = p;
     drawProgress(prog, ids);
     live(`${CHAINS[p.chain].name}: ${p.phase} ${p.done}/${p.total}`);
   };
+  invalidateFrom('result');
+  setBusy(true);
   try {
     await runner.refreshHistory(ids, { onProgress });
+    const key = planKey();
     S.plan = await runner.buildPlan(S.listText, ids, { onProgress });
     S.carts = await runner.inspectCarts(ids.filter((c) => !S.plan.chainErrors[c]));
+    S.planKey = key;
+    S.policy = {};
   } catch (e) {
     prog.replaceChildren(h('div', { class: 'error', role: 'alert', text: errText(e.code) }));
     return;
+  } finally {
+    setBusy(false);
   }
   prog.replaceChildren();
-  lead.textContent = 'זה מה שנבחר בכל אתר. אפשר להחליף מוצר, לשנות כמות או להוריד שורה, ואז למלא את העגלות.';
+  lead.textContent = REVIEW_LEAD;
   live('החיפוש הסתיים');
   drawReview(body);
+}
+
+// A cart this session already filled holds our own units: emptying it again is only ever the user's explicit choice.
+function defaultPolicy(c) {
+  if (runner.filledChains().includes(c)) return 'keep';
+  return S.profile && S.profile.existingCartPolicy === 'empty' ? 'empty' : 'keep';
 }
 
 function planChains() {
@@ -287,7 +359,18 @@ function planChains() {
 function drawReview(body) {
   const plan = S.plan;
   const chains = planChains();
+  // any change here makes the last result stale: it is reachable again only by filling
+  const redraw = () => {
+    const focused = document.activeElement && document.activeElement.id;
+    invalidateFrom('result');
+    drawReview(body);
+    const again = focused && document.getElementById(focused);
+    if (again) again.focus(); // keyboard users stay on the control they just used
+  };
   body.replaceChildren();
+  if (runner.filledChains().length) {
+    put(body, h('p', { class: 'note', role: 'note', 'data-testid': 'refill-note', text: 'העגלות כבר מולאו. מילוי חוזר יעדכן את הכמויות לפי הרשימה הזאת.' }));
+  }
   for (const [c, e] of Object.entries(plan.chainErrors)) put(body, errorBox(c, e.code, true));
   if (!chains.length) {
     put(body, h('p', { class: 'error', text: 'לא הצלחנו לחפש באף אתר.' }), btn('חזרה לחיבור', () => go('connect')));
@@ -296,29 +379,39 @@ function drawReview(body) {
   const head = h('tr', null, h('th', { scope: 'col', text: 'מוצר ברשימה' }), chains.map((c) => h('th', { scope: 'col', text: CHAINS[c].name })));
   const rows = plan.lines.map((l, i) => {
     const incl = h('input', { type: 'checkbox', id: 'inc' + i, checked: l.enabled !== false, 'aria-label': 'כלול: ' + l.query });
-    incl.addEventListener('change', () => { runner.toggleLine(plan, i, incl.checked); drawReview(body); });
+    incl.addEventListener('change', () => { runner.toggleLine(plan, i, incl.checked); redraw(); });
     const qtyId = 'qty' + i;
     const stepper = h('span', { class: 'stepper' },
-      btn('−', () => { runner.setQty(plan, i, l.qty - 1); drawReview(body); }, { 'aria-label': 'פחות: ' + l.query }),
+      btn('−', () => { runner.setQty(plan, i, l.qty - 1); redraw(); }, { 'aria-label': 'פחות: ' + l.query }),
       h('span', { id: qtyId, 'aria-label': 'כמות', text: String(l.qty) }),
-      btn('+', () => { runner.setQty(plan, i, l.qty + 1); drawReview(body); }, { 'aria-label': 'עוד: ' + l.query }));
+      btn('+', () => { runner.setQty(plan, i, l.qty + 1); redraw(); }, { 'aria-label': 'עוד: ' + l.query }));
     const first = h('th', { scope: 'row' }, h('label', null, incl, ' ', l.query), h('div', null, stepper));
     const cells = chains.map((c) => {
       const e = l.chains[c];
-      const td = h('td');
+      const td = h('td', { 'data-testid': `cell-${i}-${c}`, class: e && e.excluded ? 'excluded' : null });
       if (!e) return td;
       if (e.product) {
-        put(td, h('div', { text: e.product.name }),
-          h('div', null, num(e.lineTotal), e.promoApplied ? ' · ' + (e.product.promo.description || 'מבצע') : ''));
+        put(td, h('div', { class: 'product-name', text: e.product.name }),
+          e.excluded ? null : h('div', null, num(e.lineTotal), e.promoApplied ? ' · ' + (e.product.promo.description || 'מבצע') : ''));
       } else put(td, h('div', { text: e.searchError ? 'החיפוש נכשל' : (e.missingReason || 'לא נמצא') }));
-      put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
-      if (e.results.length > 1 || (e.results.length && !e.product)) {
+      if (e.excluded) put(td, h('span', { class: 'badge bad', text: REMOVED_TEXT }));
+      else put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
+      if (!e.excluded && (e.results.length > 1 || (e.results.length && !e.product))) {
         const sid = `sel${i}-${c}`;
         const sel = h('select', { id: sid, 'aria-label': `בחירת מוצר ב${CHAINS[c].name} עבור ${l.query}` },
           ...(e.product ? [] : [h('option', { value: '' }, 'בחרו מוצר')]),
           ...e.results.map((r) => h('option', { value: r.id, selected: e.product && e.product.id === r.id }, `${r.name} — ${money(r.price)}`)));
-        sel.addEventListener('change', async () => { if (sel.value) { await runner.setChoice(plan, i, c, sel.value); drawReview(body); } });
+        sel.addEventListener('change', async () => { if (sel.value) { await runner.setChoice(plan, i, c, sel.value); redraw(); } });
         put(td, h('div', null, sel));
+      }
+      if (e.product) {
+        // drop this product at this chain only (e.g. a wrong match); the choice is kept for re-including
+        const xid = `ex${i}-${c}`;
+        const ex = h('input', { type: 'checkbox', id: xid, checked: !!e.excluded, 'data-testid': `exclude-${i}-${c}` });
+        ex.addEventListener('change', () => { runner.setExcluded(plan, i, c, ex.checked); redraw(); });
+        put(td, h('div', { class: 'exclude' }, ex,
+          h('label', { for: xid, class: 'inline' }, 'לא לקנות כאן',
+            h('span', { class: 'sr-only', text: ` (${l.query}, ${CHAINS[c].name})` }))));
       }
       return td;
     });
@@ -329,49 +422,72 @@ function drawReview(body) {
     chains.map((c) => h('td', { 'data-testid': 'total-' + c }, num(totals[c]))));
   put(body, h('div', { class: 'table-wrap' }, h('table', null, h('thead', null, head), h('tbody', null, rows), h('tfoot', null, foot))));
 
-  const withCart = chains.filter((c) => S.carts[c] && S.carts[c].lines.length);
+  const filled = runner.filledChains();
+  const withCart = chains.filter((c) => filled.includes(c) || (S.carts[c] && S.carts[c].lines.length));
   if (withCart.length) {
     put(body, h('h3', { text: 'יש כבר מוצרים בעגלה' }));
     for (const c of withCart) {
-      const def = S.profile && S.profile.existingCartPolicy === 'empty' ? 'empty' : 'keep';
-      S.policy[c] ||= def;
+      S.policy[c] ||= defaultPolicy(c);
       const radio = (val, text) => {
         const id = `pol-${c}-${val}`;
         const r = h('input', { type: 'radio', name: 'pol-' + c, id, value: val, checked: S.policy[c] === val, 'data-testid': `policy-${c}-${val}` });
         r.addEventListener('change', () => { S.policy[c] = val; });
         return h('div', null, r, ' ', h('label', { for: id, class: 'inline', text }));
       };
-      put(body, h('fieldset', null, h('legend', { text: `${CHAINS[c].name}: ${S.carts[c].lines.length} מוצרים בעגלה` }),
+      const count = S.carts[c] ? `${S.carts[c].lines.length} מוצרים בעגלה` : 'לא הצלחנו לקרוא את העגלה';
+      put(body, h('fieldset', { 'data-testid': 'policy-' + c }, h('legend', { text: `${CHAINS[c].name}: ${count}` }),
         radio('empty', 'לרוקן את העגלה הקיימת'), radio('keep', 'להשאיר ולהוסיף')));
     }
   }
   put(body, h('div', { class: 'actions' },
-    primary('מלא את העגלות', () => go('result'), { 'data-testid': 'btn-fill', disabled: !plan.lines.some((l) => l.enabled !== false) })));
+    primary('מלא את העגלות', () => go('result', { fill: true }), { 'data-testid': 'btn-fill', disabled: !plan.lines.some((l) => l.enabled !== false) })));
 }
 
 /* ---------- 5. result ---------- */
-async function viewResult(box) {
+async function viewResult(box, { fill } = {}) {
   const chains = planChains();
-  put(box, h('h2', { text: 'ממלאים את העגלות…' }));
+  const title = h('h2', { text: 'ממלאים את העגלות…' });
+  put(box, title);
   const prog = h('div');
   const body = h('div');
   put(box, prog, body);
+  // Reached again through the steps bar: show the last result, never fill again by itself.
+  if (!fill) {
+    title.textContent = 'התוצאה';
+    if (S.final) drawResult(body);
+    else put(body, h('p', { class: 'note', text: 'העגלות עוד לא מולאו. חזרו לבדיקה ולחצו "מלא את העגלות".' }));
+    return;
+  }
+  S.final = null;
   S.progress = {};
   const onProgress = (p) => {
     S.progress[p.chain] = p;
     drawProgress(prog, chains);
     live(`${CHAINS[p.chain].name}: ${p.message || ''}`);
   };
+  setBusy(true);
   try {
     const policy = {};
-    for (const c of chains) policy[c] = S.policy[c] || (S.profile && S.profile.existingCartPolicy === 'empty' ? 'empty' : 'keep');
+    for (const c of chains) policy[c] = S.policy[c] || defaultPolicy(c);
     S.fillResults = await runner.fill(S.plan, chains, policy, { onProgress });
+    // A re-fill starts from "keep" and shows what is in the cart NOW (the cart as it was before this fill is stale).
+    const filled = runner.filledChains();
+    for (const c of filled) delete S.policy[c];
+    const unread = [];
+    for (const c of filled) {
+      const raw = S.fillResults[c] && S.fillResults[c].rawCart;
+      if (raw) S.carts[c] = { lines: raw.lines || [], itemsTotal: typeof raw.itemsTotal === 'number' ? raw.itemsTotal : null };
+      else unread.push(c);
+    }
+    if (unread.length) Object.assign(S.carts, await runner.inspectCarts(unread)); // read-only
     S.final = await runner.finish(S.plan, S.fillResults, S.profile || defaultProfile());
   } catch (e) {
     prog.replaceChildren(h('div', { class: 'error', role: 'alert', text: errText(e.code) }));
     return;
+  } finally {
+    setBusy(false);
   }
-  box.firstChild.textContent = 'התוצאה';
+  title.textContent = 'התוצאה';
   prog.replaceChildren();
   live('העגלות מוכנות');
   drawResult(body);
@@ -385,6 +501,11 @@ function chainWarnings(c, s, fr) {
     const name = S.plan.lines[i.line].query;
     const added = i.actualQty - (i.existingQty || 0);
     w.push(added > 0 ? `${name}: נוספה כמות שונה (${added} במקום ${i.wantedQty})` : `${name}: לא נוסף לעגלה${i.code ? ' — ' + errText(i.code) : ''}`);
+  }
+  for (const r of fr.removed || []) {
+    if (r.ok) continue;
+    const name = r.productName || r.productId;
+    w.push(`${name}: לא הצלחנו להוריד מהעגלה את מה שהוספנו קודם — הורידו באתר${r.code ? ' (' + errText(r.code) + ')' : ''}`);
   }
   if (fr.extra) w.push(`יש בעגלה ${fr.extra.count} מוצרים קודמים (${money(fr.extra.total)}) שלא נכללו בהשוואה`);
   if (fr.couldNotEmpty) w.push('לא ניתן לרוקן את העגלה אוטומטית — רוקנו אותה באתר');
@@ -422,6 +543,11 @@ function drawResult(body) {
       kv('חסרים', h('span', { text: String(s.missingCount) })));
     const reasons = (rank[c] && rank[c].reasons) || [];
     const warns = chainWarnings(c, s, fr);
+    if (s.unavailable && s.unavailable.length) {
+      put(card, h('div', { class: 'warn', role: 'alert', 'data-testid': 'unavailable-' + c },
+        h('strong', { text: 'מוצרים שאזלו באתר — הסירו אותם מהעגלה באתר או החליפו' }),
+        h('ul', { class: 'clean' }, s.unavailable.map((u) => h('li', { text: u.name })))));
+    }
     if (reasons.length) put(card, h('ul', { class: 'clean' }, reasons.map((r) => h('li', { text: r }))));
     if (warns.length) put(card, h('div', { class: 'note', role: 'note' }, h('ul', { class: 'clean' }, warns.map((r) => h('li', { text: r })))));
     put(card, btn('עבור לעגלה ב' + CHAINS[c].name, () => openSite(c, 'cart'), { class: 'primary', 'data-testid': 'btn-cart-' + c }),
@@ -440,7 +566,8 @@ function drawResult(body) {
       const e = l.chains[c];
       const td = h('td');
       if (e.product) put(td, h('div', { text: e.product.name }), h('div', null, num(e.lineTotal)));
-      put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'), text: MATCH_TEXT[e.match] }));
+      put(td, h('span', { class: 'badge ' + (e.match === 'identical' || e.match === 'similar' ? 'ok' : 'bad'),
+        text: e.match === 'missing' && e.missingReason ? e.missingReason : MATCH_TEXT[e.match] }));
       if (comparable(e.match) && e.lineTotal === min && prices.length > 1) put(td, ' ', h('span', { class: 'cheapest', text: 'הזול ביותר' }));
       return td;
     }));
@@ -457,7 +584,9 @@ function drawResult(body) {
       ...sg.goesWith.filter((g) => !sg.maybeForgot.some((m) => m.name === g.name)).map((g) => `${g.name} — בדרך כלל קונים עם ${g.with}`)]));
   put(body, h('div', { class: 'actions' }, primary('קנייה חדשה', async () => {
     try { await closeWorkers(); } catch { /* ignore */ }
-    S.plan = null; S.fillResults = null; S.final = null; S.policy = {}; S.listText = '';
+    runner.newSession();
+    S.plan = null; S.fillResults = null; S.final = null; S.policy = {}; S.listText = ''; S.planKey = null;
+    S.reached = STEP_KEYS.indexOf('list');
     go('list');
   }, { 'data-testid': 'btn-new' })));
 }

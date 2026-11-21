@@ -14,7 +14,7 @@ every sentence true).
   diagnostics steps pass. A 2-item and a 3-item list ran through the extension UI with policy "keep": each site's own
   cart showed exactly the written items, and the result page totals equal the sites' totals. Details and every
   verified endpoint: `docs/SITES.md` ([V 2026-11-20] tags).
-- Passing: `npm test` (193), `npm run test:e2e` (11), mocks and fixtures follow the real response shapes.
+- Passing: `npm test` (221), `npm run test:e2e` (15), mocks and fixtures follow the real response shapes.
 - Regular Chrome: NOT yet verified. An earlier note said the user had run it there; a screenshot on 2026-11-21 showed the
   extension was not loaded (Developer mode off), so that report was mistaken.
 - Not yet verified: Hatzi Hinam `emptyCart` (DELETE taken from the site's JS, never executed live); Shufersal without a delivery address.

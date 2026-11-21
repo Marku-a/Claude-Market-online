@@ -21,8 +21,14 @@ body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap); }
 .top h1 { margin: 0; font-size: 1.5rem; color: var(--primary); }
 .steps { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; flex: 1; }
-.steps li { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: .9rem; }
-.steps li[aria-current="step"] { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; }
+.steps li { display: flex; }
+.steps .step { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--muted); font-size: .9rem; min-height: 0; }
+.steps button.step { border-color: var(--primary); color: var(--primary-dark); text-decoration: underline; }
+.steps .step[aria-current="step"] { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 700; text-decoration: none; }
+button.back { margin-bottom: 8px; }
+td.excluded .product-name { text-decoration: line-through; color: var(--muted); }
+.exclude { display: inline-flex; align-items: center; gap: 4px; font-weight: 400; margin-top: 4px; }
+.warn { background: var(--err-bg); color: var(--err-ink); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
 h2 { margin: 0 0 8px; font-size: 1.4rem; }
 h3 { margin: 0 0 8px; font-size: 1.1rem; }
 .lead { color: var(--muted); margin: 0 0 var(--gap); }

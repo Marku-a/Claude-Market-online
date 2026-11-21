@@ -77,7 +77,10 @@ export function parseCustomer(json) {
   return {
     items: { ...items },
     deliveryFee: dt && num(dt.price) !== null ? num(dt.price) : null,
-    storeId: dt && dt.store_id != null ? dt.store_id : json.user.store_id ?? null,
+    // The store the site itself prices and checks stock with: the chosen slot's store, else the online store 331.
+    // NOT user.store_id (the account's club store): with it, products missing at 331 looked in stock and landed
+    // in the cart as "חסר במלאי" (verified 2026-11-21: the site sends store 331; isAvailable == 331 ∈ available_in).
+    storeId: dt && dt.store_id != null ? dt.store_id : null,
   };
 }
 
@@ -127,6 +130,19 @@ export function parseItemsInfo(json) {
       brand: (it.gs && it.gs.BrandName) || null,
       category: (it.department && it.department.name) || null,
     });
+  }
+  return map;
+}
+
+// Catalog items (/api/items) -> Map item_id -> available at `store` (boolean). Items without an
+// `available_in` array are left out (= unknown). The site's own cart marks a line unavailable exactly when the
+// cart store is not in available_in (verified 2026-11-21).
+export function parseAvailability(json, store) {
+  const map = new Map();
+  const st = Number(store);
+  for (const it of need(json, 'data', 'array')) {
+    if (!it || typeof it !== 'object' || it.id == null || !Array.isArray(it.available_in)) continue;
+    map.set(String(it.id), it.available_in.map(Number).includes(st));
   }
   return map;
 }
@@ -191,7 +207,7 @@ export function createAdapter(env) {
     const id = checkId(u.id, ID_RE, 'user id');
     const json = await http.getJson(`${API}/api/v2/site/clubs/customer/${encodeURIComponent(id)}`, { headers: headers(u) });
     const c = parseCustomer(json);
-    const store = Number(c.storeId ?? u.store_id ?? DEFAULT_STORE);
+    const store = Number(c.storeId ?? DEFAULT_STORE);
     ctxCache = { key: `${u.token}|${id}`, at: now().getTime(), value: { store } };
     return { ...c, store };
   }
@@ -281,7 +297,26 @@ export function createAdapter(env) {
       if (!Object.keys(c.items).length) {
         return { lines: [], itemsTotal: 0, deliveryFee: c.deliveryFee, grandTotal: c.deliveryFee || 0, minOrder: null };
       }
-      return parseCart(await priceCart(u, c.store, c.items, { persist: false }), c.deliveryFee);
+      const view = parseCart(await priceCart(u, c.store, c.items, { persist: false }), c.deliveryFee);
+      // The priced response silently LEAVES OUT lines the cart store cannot supply (verified 2026-11-21: 13 stored
+      // lines, 8 priced, 5 shown "חסר במלאי" on the site). Start from the stored cart so those lines stay visible.
+      const priced = new Set(view.lines.map((l) => l.id));
+      const ids = Object.keys(c.items).filter((x) => ID_RE.test(x));
+      let avail = new Map();
+      const names = new Map();
+      if (ids.length) {
+        try {
+          const json = await http.postJson(`${ORIGIN}/api/items`, { ids: ids.join(','), type: 'id' }, { headers: headers(u) });
+          avail = parseAvailability(json, c.store);
+          for (const it of json.data) if (it && it.id != null && it.name) names.set(String(it.id), String(it.name));
+        } catch { /* availability unknown: dropped lines are still reported below */ }
+      }
+      for (const l of view.lines) if (avail.get(l.id) === false) l.available = false;
+      for (const id of ids) {
+        if (priced.has(id)) continue;
+        view.lines.push({ id, name: names.get(id) || '', qty: num(c.items[id]) ?? 0, lineTotal: 0, available: false });
+      }
+      return view;
     },
 
     // Replace semantics: POST the whole map so other items are preserved.

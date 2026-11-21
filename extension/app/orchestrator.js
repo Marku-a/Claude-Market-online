@@ -2,7 +2,7 @@
 import { normalize, similarity, parseListLine, productKey } from '../engine/text.js';
 import { buildProfile, coPurchases, maybeForgot, goesWith } from '../engine/profile.js';
 import { lineCost, dealSuggestion, priceChange } from '../engine/choose.js';
-import { matchLine, summarize, recommend } from '../engine/compare.js';
+import { matchLine, summarize, recommend, runLine } from '../engine/compare.js';
 
 const HISTORY_LIMIT = 10;
 const FAVOURITE_MIN_SIM = 0.5;
@@ -49,12 +49,16 @@ export function estimateTotals(plan, chainIds) {
   const ids = chainIds || Object.keys(plan.lines[0] ? plan.lines[0].chains : {});
   for (const c of ids) {
     out[c] = r2(plan.lines.filter((l) => l.enabled !== false)
-      .reduce((s, l) => s + (l.chains[c] && l.chains[c].product ? l.chains[c].lineTotal || 0 : 0), 0));
+      .reduce((s, l) => s + (l.chains[c] && l.chains[c].product && !l.chains[c].excluded ? l.chains[c].lineTotal || 0 : 0), 0));
   }
   return out;
 }
 
 export function createRunner({ rpc, store, today, chains }) {
+  // Units this extension itself put in each cart during this session (page lifetime, never stored):
+  // {chain: {productId: {units, product}}}. A re-fill treats them as its own, so going back and filling
+  // again does not double quantities, and a product dropped since is taken back out.
+  const session = {};
   const loadArr = async (key) => {
     const v = await store.get(key);
     return Array.isArray(v) ? v : [];
@@ -265,6 +269,18 @@ export function createRunner({ rpc, store, today, chains }) {
     return plan;
   }
 
+  // "לא לקנות כאן": drop one line at ONE chain only. The chosen product is kept so re-including restores it.
+  function setExcluded(plan, lineIdx, chain, excluded) {
+    const e = plan.lines[lineIdx] && plan.lines[lineIdx].chains[chain];
+    if (e) e.excluded = !!excluded;
+    return plan;
+  }
+
+  // Chains whose cart this session already filled.
+  const filledChains = () => Object.keys(session);
+  // "קנייה חדשה": units added for the previous list now count as the user's own (never taken back).
+  const newSession = () => { for (const k of Object.keys(session)) delete session[k]; };
+
   async function inspectCarts(chainIds) {
     const out = {};
     await Promise.all(chainIds.map(async (chain) => {
@@ -279,20 +295,23 @@ export function createRunner({ rpc, store, today, chains }) {
   }
 
   const sameQty = (a, b) => Math.abs(a - b) < 1e-9;
+  const q3 = (x) => Math.round(x * 1000) / 1000; // kg quantities: no float noise (1.3 + 0.4 = 1.7, not 1.7000000000000002)
+  const NONE = 1e-6;
 
   async function fill(plan, chainIds, policyByChain, { onProgress } = {}) {
     const out = {};
     await Promise.all(chainIds.map(async (chain) => {
-      const jobs = plan.lines.map((l, idx) => ({ l, idx })).filter(({ l }) => l.enabled !== false && l.chains[chain] && l.chains[chain].product);
-      const res = { items: [], cart: null, rawCart: null, extra: null, couldNotEmpty: false, error: null };
+      const jobs = plan.lines.map((l, idx) => ({ l, idx }))
+        .filter(({ l }) => l.enabled !== false && l.chains[chain] && l.chains[chain].product && !l.chains[chain].excluded);
+      const res = { items: [], removed: [], cart: null, rawCart: null, extra: null, couldNotEmpty: false, error: null };
       out[chain] = res;
       let step = 0;
-      const total = jobs.length + 2;
+      let total = jobs.length + 2;
       const prog = (message) => onProgress && onProgress({ chain, phase: 'fill', done: step, total, message });
       try {
         // 'absolute': the cart was emptied, quantities are set as wanted.
-        // 'keep': existing quantities stay; every product of ours is raised to existing + wanted
-        // (quantities only ever increase, which every site supports).
+        // 'keep': units that are not ours stay; every product of ours is set to (units not ours) + wanted.
+        // Units not ours are never lowered - only units this session itself added earlier may be (re-fill).
         let mode = 'keep';
         if ((policyByChain && policyByChain[chain]) === 'empty') {
           prog('מרוקנים עגלה');
@@ -305,29 +324,79 @@ export function createRunner({ rpc, store, today, chains }) {
             res.couldNotEmpty = true;
           }
         }
-        const existing = {};
+        // Per product: { units: ours, base: units not ours (seen before our first write), product }.
+        const prev = mode === 'keep' ? session[chain] || {} : {}; // an emptied cart holds nothing of ours
+        const mem = {}; // what is ours after this fill; kept up to date after every write
+        const inCart = {};
+        const existing = {}; // units that are not ours, per product
         if (mode === 'keep') {
           const before = await rpc(chain, 'getCart', []);
-          for (const x of (before && before.lines) || []) existing[String(x.id)] = (existing[String(x.id)] || 0) + (isNum(x.qty) ? x.qty : 0);
+          for (const x of (before && before.lines) || []) inCart[String(x.id)] = (inCart[String(x.id)] || 0) + (isNum(x.qty) ? x.qty : 0);
+          for (const [id, q] of Object.entries(inCart)) existing[id] = q3(q);
         }
+        // Ours can only be what is above the units not ours: if the user removed some of our units on the site,
+        // they come off our count first, never off the user's own.
+        for (const [id, p] of Object.entries(prev)) {
+          const have = existing[id] || 0;
+          const pb = isNum(p.base) ? p.base : 0;
+          const ours = q3(Math.min(p.units, Math.max(0, have - pb)));
+          existing[id] = q3(have - ours);
+          if (ours > NONE) mem[id] = { units: ours, base: existing[id], product: p.product };
+        }
+        session[chain] = mem;
+        const base = { ...existing };
+        const setOurs = (id, units, product) => {
+          const u = q3(Math.max(0, units));
+          if (u > NONE) mem[id] = { units: u, base: base[id] || 0, product };
+          else delete mem[id];
+        };
+        // A write whose result is unknown may or may not have landed: record the smaller of the two possible states.
+        const unknownOutcome = (id, target, product) => setOurs(id, Math.min((mem[id] && mem[id].units) || 0, target - (base[id] || 0)), product);
+        // Products of ours from an earlier fill that are no longer wanted: back to the units that are not ours.
+        const wantedIds = new Set(jobs.map(({ l }) => String(l.chains[chain].product.id)));
+        const drop = Object.keys(mem).filter((id) => !wantedIds.has(id));
+        total += drop.length;
         step++;
         for (const { l, idx } of jobs) {
           const e = l.chains[chain];
           const id = String(e.product.id);
           prog(l.query);
-          const existingQty = existing[id] || 0;
-          const target = existingQty + e.qty;
+          const existingQty = q3(existing[id] || 0);
+          const target = q3(existingQty + e.qty);
           const item = { line: idx, productId: id, existingQty, wantedQty: e.qty, actualQty: 0, ok: false, code: null, share: null };
           try {
             const r = await rpc(chain, 'setItem', [e.product.id, target, e.product]);
             item.actualQty = r && isNum(r.qty) ? r.qty : r && r.ok ? target : 0;
             item.ok = !!(r && r.ok) && sameQty(item.actualQty, target);
             if (!r || !r.ok) item.code = (r && r.code) || 'SHAPE_CHANGED';
-            if (item.actualQty > 0) existing[id] = item.actualQty;
+            if (item.actualQty > 0) existing[id] = q3(item.actualQty);
+            if (r && (r.ok || isNum(r.qty))) { // the cart quantity is known: record our units
+              setOurs(id, item.actualQty - (base[id] || 0), e.product);
+            } else unknownOutcome(id, target, e.product);
           } catch (err) {
             item.code = codeOf(err);
+            unknownOutcome(id, target, e.product);
           }
           res.items.push(item);
+          step++;
+        }
+        for (const id of drop) {
+          const target = q3(base[id] || 0);
+          const p = mem[id].product || null;
+          prog(p && p.name ? p.name : '');
+          const rm = { productId: id, productName: (p && p.name) || null, targetQty: target, ok: false, code: null };
+          try {
+            const r = await rpc(chain, 'setItem', [p ? p.id : id, target, p]);
+            const got = r && isNum(r.qty) ? r.qty : r && r.ok ? target : null;
+            rm.ok = !!(r && r.ok) && got != null && sameQty(got, target);
+            if (!rm.ok) rm.code = (r && r.code) || 'SHAPE_CHANGED';
+            if (got != null) setOurs(id, got - target, p);
+            else delete mem[id]; // unknown outcome: the write may have landed, so claim nothing
+          } catch (err) {
+            rm.code = codeOf(err);
+            delete mem[id]; // unknown outcome (the write may have landed): claim nothing, never lower the user's units later
+          }
+          res.removed.push(rm);
           step++;
         }
         prog('בודקים את העגלה');
@@ -394,18 +463,7 @@ export function createRunner({ rpc, store, today, chains }) {
       const lines = [];
       plan.lines.forEach((l, idx) => {
         if (l.enabled === false || !l.chains[chain]) return;
-        const e = l.chains[chain];
-        const it = itemFor.get(idx);
-        // missing = not in the re-read cart, or none of our units were added
-        const inCart = !fr.rawCart || !Array.isArray(fr.rawCart.lines) || !e.product ||
-          fr.rawCart.lines.some((x) => String(x.id) === String(e.product.id));
-        const miss = !e.product || !it || !inCart || it.actualQty - it.existingQty <= 0;
-        // Our share of the price the site itself charges for this line (after its own promotions).
-        const lineTotal = miss ? 0 : (it.share ?? e.lineTotal);
-        lines.push({
-          line: l.query, match: miss ? 'missing' : e.match, product: miss ? null : e.product,
-          qty: e.qty, lineTotal,
-        });
+        lines.push(runLine(l.query, l.chains[chain], itemFor.get(idx) || null, fr.rawCart));
       });
       chainRuns[chain] = { status: 'ok', lines, cart: fr.cart };
     }
@@ -439,5 +497,8 @@ export function createRunner({ rpc, store, today, chains }) {
     return { summary, recommendation, fillResults };
   }
 
-  return { connect, refreshHistory, suggestForgot, buildPlan, setChoice, setQty, toggleLine, inspectCarts, fill, finish };
+  return {
+    connect, refreshHistory, suggestForgot, buildPlan, setChoice, setQty, toggleLine, setExcluded, filledChains, newSession,
+    inspectCarts, fill, finish,
+  };
 }

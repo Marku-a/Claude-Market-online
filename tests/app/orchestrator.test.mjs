@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRunner } from '../../extension/app/orchestrator.js';
+import { createRunner, estimateTotals } from '../../extension/app/orchestrator.js';
 import { CHAINS } from '../../extension/sites/registry.js';
 
 const TODAY = '2026-11-09';
@@ -301,4 +301,232 @@ test('finish saves runs (max 10), ownHistory, lastList; only allowed rpc methods
   assert.equal(own[0].items.length, 2);
   assert.ok(calls.length > 0);
   for (const c of calls) assert.ok(ALLOWED.has(c.method), c.method);
+});
+
+const PROF = { discounts: [], deliveryOverrides: {} };
+const qtyOf = (cart, id) => (cart.find((l) => l.id === id) || { qty: 0 }).qty;
+
+test('re-fill (keep) after going back: our units are replaced, never doubled; pre-existing units stay', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב\nלחם', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 5, lineTotal: 32.5 }); // the user's own 5 milks
+  assert.deepEqual(runner.filledChains(), []);
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 7);
+  assert.deepEqual(runner.filledChains(), ['ramilevy']);
+  calls.length = 0;
+  const fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' }); // same plan again
+  assert.equal(qtyOf(carts.ramilevy, '1'), 7);
+  assert.equal(qtyOf(carts.ramilevy, '2'), 1);
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => [c.args[0], c.args[1]]), [['1', 7], ['2', 1]]);
+  assert.deepEqual(fr.ramilevy.items.map((i) => [i.existingQty, i.actualQty, i.ok]), [[5, 7, true], [0, 1, true]]);
+  assert.deepEqual(fr.ramilevy.removed, []);
+  assert.equal(fr.ramilevy.cart.itemsTotal, 20); // still only our 2 milks + bread
+  // a smaller quantity lowers only our units
+  runner.setQty(plan, 0, 1);
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 6);
+  // a third fill with the same plan still does not add anything
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 6);
+});
+
+test('re-fill: a product we added that is now dropped/excluded goes back to what was there before', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב\nלחם', ['ramilevy', 'shufersal']);
+  carts.ramilevy.push({ id: '2', name: 'לחם אחיד', qty: 1, lineTotal: 7 }); // one bread of the user's own
+  await runner.fill(plan, ['ramilevy', 'shufersal'], { ramilevy: 'keep', shufersal: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '2'), 2);
+  runner.setExcluded(plan, 1, 'ramilevy', true); // bread: not at Rami Levy
+  runner.toggleLine(plan, 0, false); // milk: not at all
+  calls.length = 0;
+  const fr = await runner.fill(plan, ['ramilevy', 'shufersal'], { ramilevy: 'keep', shufersal: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '2'), 1, 'the user\'s own bread stays');
+  assert.equal(qtyOf(carts.ramilevy, '1'), 0, 'our milk is taken out');
+  assert.equal(qtyOf(carts.shufersal, '1'), 0);
+  assert.equal(qtyOf(carts.shufersal, '2'), 1, 'other chains are unaffected by the exclusion');
+  assert.deepEqual(fr.ramilevy.items, []);
+  assert.deepEqual(fr.ramilevy.removed.map((r) => [r.productId, r.targetQty, r.ok]).sort(), [['1', 0, true], ['2', 1, true]]);
+  const rlSets = calls.filter((c) => c.chain === 'ramilevy' && c.method === 'setItem').map((c) => [c.args[0], c.args[1]]).sort();
+  assert.deepEqual(rlSets, [['1', 0], ['2', 1]]);
+  // re-including restores the chosen product; still no doubling
+  runner.setExcluded(plan, 1, 'ramilevy', false);
+  assert.equal(plan.lines[1].chains.ramilevy.product.id, '2');
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '2'), 2);
+});
+
+test('re-fill: a failed take-back stays ours and is reported; units not ours are never lowered', async () => {
+  let current = 3; // the user's own 3 units
+  const { runner } = makeEnv({
+    'hazihinam.getCart': () => ({ lines: current ? [{ id: '1', name: 'חלב תנובה 3%', qty: current, lineTotal: 6 * current }] : [], itemsTotal: 6 * current }),
+    'hazihinam.setItem': (args) => {
+      if (args[1] < 3) throw err('UNSUPPORTED'); // would touch the user's own units
+      current = args[1];
+      return { ok: true, qty: current };
+    },
+  });
+  const plan = await runner.buildPlan('2 חלב', ['hazihinam']);
+  await runner.setChoice(plan, 0, 'hazihinam', '1');
+  await runner.fill(plan, ['hazihinam'], { hazihinam: 'keep' });
+  assert.equal(current, 5);
+  runner.setExcluded(plan, 0, 'hazihinam', true);
+  const fr = await runner.fill(plan, ['hazihinam'], { hazihinam: 'keep' });
+  assert.equal(current, 3, 'back to the user\'s own 3, never below');
+  assert.deepEqual(fr.hazihinam.removed.map((r) => [r.targetQty, r.ok]), [[3, true]]);
+  const out = await runner.finish(plan, fr, PROF);
+  assert.equal(out.summary.lines[0].chains.hazihinam.missingReason, 'הוסר על ידך');
+});
+
+test('take-back that throws (outcome unknown) is no longer claimed as ours: never retried on the user\'s units', async () => {
+  let fail = true;
+  const { runner, carts } = makeEnv({
+    'ramilevy.setItem': (args, cart) => {
+      if (args[1] === 0 && fail) throw err('NETWORK');
+      const i = cart.findIndex((l) => l.id === args[0]);
+      if (i >= 0) cart.splice(i, 1);
+      if (args[1] > 0) cart.push({ id: args[0], name: 'x', qty: args[1], lineTotal: 7 * args[1] });
+      return { ok: true, qty: args[1] };
+    },
+  });
+  const plan = await runner.buildPlan('לחם', ['ramilevy']);
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  let fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(fr.ramilevy.removed.map((r) => [r.ok, r.code, r.productName]), [[false, 'NETWORK', 'לחם אחיד']]);
+  assert.equal(qtyOf(carts.ramilevy, '2'), 1);
+  fail = false;
+  fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(fr.ramilevy.removed, [], 'the write may have landed, so nothing is claimed any more');
+  assert.equal(qtyOf(carts.ramilevy, '2'), 1);
+});
+
+test('re-fill: the user removed some of our units on the site - the user\'s own units are never lowered', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 1, lineTotal: 6.5 }); // the user's own milk
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 3);
+  carts.ramilevy[0].qty = 1; // the user takes our 2 out on the site
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  calls.length = 0;
+  const fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 1, 'the user\'s milk stays');
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem'), [], 'nothing of ours is left to take back');
+  assert.deepEqual(fr.ramilevy.removed, []);
+});
+
+test('re-fill: the user removed one of ours and the wanted quantity went down - only our units move', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 1, lineTotal: 6.5 });
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  carts.ramilevy[0].qty = 1; // all of ours removed on the site
+  runner.setQty(plan, 0, 1);
+  calls.length = 0;
+  let fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => c.args[1]), [2], 'user\'s 1 + our 1');
+  assert.equal(fr.ramilevy.items[0].existingQty, 1);
+  carts.ramilevy[0].qty = 3; // the user adds one more of their own
+  fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 3, 'user\'s 2 + our 1');
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 2, 'only our unit is taken back');
+});
+
+test('re-fill: a write that throws after landing never makes us lower the user\'s units later', async () => {
+  let throwAfter = false;
+  const { runner, carts } = makeEnv({
+    'ramilevy.setItem': (args, cart) => {
+      const i = cart.findIndex((l) => l.id === args[0]);
+      if (i >= 0) cart.splice(i, 1);
+      if (args[1] > 0) cart.push({ id: args[0], name: 'x', qty: args[1], lineTotal: 6.5 * args[1] });
+      if (throwAfter) { throwAfter = false; throw err('NETWORK'); } // posted, then the re-read failed
+      return { ok: true, qty: args[1] };
+    },
+  });
+  const plan = await runner.buildPlan('2 חלב', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 1, lineTotal: 6.5 }); // the user's own
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 3);
+  runner.setQty(plan, 0, 1);
+  throwAfter = true;
+  const fr = await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(fr.ramilevy.items[0].code, 'NETWORK');
+  assert.equal(qtyOf(carts.ramilevy, '1'), 2);
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.equal(qtyOf(carts.ramilevy, '1'), 2, 'user\'s 1 + our 1, never 1');
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.ok(qtyOf(carts.ramilevy, '1') >= 1, 'the user\'s own unit is never taken');
+});
+
+test('kg quantities: re-fill passes clean numbers to the site (no float noise)', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('חלב', ['ramilevy']);
+  carts.ramilevy.push({ id: '1', name: 'חלב תנובה 3%', qty: 1.3, lineTotal: 8 }); // the user's own 1.3 kg
+  plan.lines[0].chains.ramilevy.qty = 0.6;
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  plan.lines[0].chains.ramilevy.qty = 0.4;
+  calls.length = 0;
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => c.args[1]), [1.7]);
+  plan.lines[0].chains.ramilevy.qty = 1;
+  calls.length = 0;
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => c.args[1]), [2.3]);
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  calls.length = 0;
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem').map((c) => c.args[1]), [1.3]);
+  calls.length = 0;
+  await runner.fill(plan, ['ramilevy'], { ramilevy: 'keep' });
+  assert.deepEqual(calls.filter((c) => c.method === 'setItem'), [], 'nothing of ours is left (no 1e-16 leftovers)');
+});
+
+test('policy "empty" on a re-fill starts from scratch (nothing to take back)', async () => {
+  const { runner, carts } = makeEnv();
+  const plan = await runner.buildPlan('2 חלב', ['shufersal']);
+  await runner.fill(plan, ['shufersal'], { shufersal: 'keep' });
+  const fr = await runner.fill(plan, ['shufersal'], { shufersal: 'empty' });
+  assert.equal(qtyOf(carts.shufersal, '1'), 2);
+  assert.deepEqual(fr.shufersal.removed, []);
+  await runner.fill(plan, ['shufersal'], { shufersal: 'keep' });
+  assert.equal(qtyOf(carts.shufersal, '1'), 2);
+});
+
+test('excluded at one chain: not added there, other chains unaffected, estimate and summary say "removed"', async () => {
+  const { runner, carts, calls } = makeEnv();
+  const plan = await runner.buildPlan('חלב\nלחם', ALL);
+  runner.setExcluded(plan, 0, 'ramilevy', true);
+  assert.equal(estimateTotals(plan, ['ramilevy']).ramilevy, 7); // bread only
+  const fr = await runner.fill(plan, ALL, {});
+  assert.ok(!calls.some((c) => c.chain === 'ramilevy' && c.method === 'setItem' && c.args[0] === '1'));
+  assert.equal(qtyOf(carts.ramilevy, '1'), 0);
+  assert.equal(qtyOf(carts.shufersal, '1'), 1);
+  assert.equal(qtyOf(carts.hazihinam, '9'), 1);
+  const out = await runner.finish(plan, fr, PROF);
+  assert.equal(out.summary.lines[0].chains.ramilevy.match, 'missing');
+  assert.equal(out.summary.lines[0].chains.ramilevy.missingReason, 'הוסר על ידך');
+  assert.equal(out.summary.chains.ramilevy.removedCount, 1);
+  assert.equal(out.summary.lines[0].chains.shufersal.match, 'similar');
+});
+
+test('a cart line the site reports unavailable becomes missing ("out of stock"); the site total is kept', async () => {
+  const { runner } = makeEnv({
+    'ramilevy.getCart': (args, cart) => {
+      const t = cart.reduce((s, l) => s + l.lineTotal, 0);
+      return { lines: cart.map((l) => (l.id === '1' ? { ...l, available: false } : l)), itemsTotal: t, deliveryFee: 30, grandTotal: t + 30, minOrder: 10 };
+    },
+  });
+  const plan = await runner.buildPlan('חלב\nלחם', ALL);
+  const fr = await runner.fill(plan, ALL, {});
+  const out = await runner.finish(plan, fr, PROF);
+  const rl = out.summary.chains.ramilevy;
+  assert.equal(out.summary.lines[0].chains.ramilevy.missingReason, 'אזל במלאי באתר');
+  assert.deepEqual(rl.unavailable, [{ line: 'חלב', name: 'חלב תנובה 3%' }]);
+  assert.equal(rl.itemsTotal, 13.5); // 6.5 + 7: nothing subtracted
+  assert.ok(out.recommendation.ranking.find((r) => r.chain === 'ramilevy').reasons.includes('ייתכן שהסכום באתר כולל מוצרים שאזלו'));
+  assert.deepEqual(out.summary.chains.shufersal.unavailable, []);
 });

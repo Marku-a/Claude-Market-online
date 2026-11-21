@@ -296,3 +296,137 @@ test('"delete all data" leaves chrome.storage.local empty', async () => {
     assert.deepEqual(await h.storage(), {});
   } finally { await h.close(); }
 });
+
+const searches = (state) => state.requests.filter((r) => /\/api\/catalog$|\/search\/results$|getItemsBySearch$/.test(r.path)).length;
+const cartWrites = (state) => state.requests.filter((r) => r.method === 'POST' && /\/api\/v2\/cart$|\/cart\/(add|update)$|addItemToCart$/.test(r.path)).length;
+
+test('back navigation keeps everything; re-filling from the result page does not double quantities', async () => {
+  const state = simpleState();
+  state.ramilevy.cart = { 1001: '3.00' }; // the user's own 3 milks stay untouched
+  const h = await launch({ state });
+  try {
+    await toConnect(h);
+    await runList(h);
+    await tid(h.app, 'policy-ramilevy-keep').check();
+    await fill(h);
+    const once = {
+      ramilevy: { ...state.ramilevy.cart },
+      hazihinam: { ...state.hazihinam.cart },
+      shufersal: state.shufersal.cart.map((l) => [l.code, Number(l.qty)]).sort(),
+    };
+    assert.deepEqual(once.ramilevy, { 1001: '5.00', 1002: '1.00' });
+
+    // back to the review: the plan is shown as it was, without searching or touching any cart
+    const s0 = searches(state);
+    const w0 = cartWrites(state);
+    await tid(h.app, 'btn-back').click();
+    await tid(h.app, 'btn-fill').waitFor();
+    assert.match(await text(h, 'refill-note'), /העגלות כבר מולאו/);
+    // the steps bar: every reached step is a button; the current one is marked
+    assert.equal(await tid(h.app, 'nav-review').getAttribute('aria-current'), 'step');
+    await tid(h.app, 'nav-list').click();
+    assert.equal(await tid(h.app, 'list-input').inputValue(), LIST);
+    await tid(h.app, 'nav-connect').click();
+    await tid(h.app, 'btn-continue').waitFor();
+    await tid(h.app, 'nav-result').click();
+    await tid(h.app, 'btn-new').waitFor();
+    assert.equal(money(await text(h, 'final-shufersal')), 40.9, 'the last result is shown again');
+    await tid(h.app, 'btn-back').click();
+    await tid(h.app, 'btn-fill').waitFor();
+    assert.equal(searches(state), s0, 'going back never searches again');
+    assert.equal(cartWrites(state), w0, 'going back never writes a cart');
+    assert.equal(await tid(h.app, 'policy-ramilevy-keep').isChecked(), true, 'choices are kept');
+
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, once.ramilevy, 'no doubling at Rami Levy');
+    assert.deepEqual(state.hazihinam.cart, once.hazihinam, 'no doubling at Hatzi Hinam');
+    assert.deepEqual(state.shufersal.cart.map((l) => [l.code, Number(l.qty)]).sort(), once.shufersal, 'no doubling at Shufersal');
+    assert.equal(money(await text(h, 'total-ramilevy')), 24);
+    assert.equal(money(await text(h, 'final-shufersal')), 40.9);
+    assert.deepEqual(state.forbiddenHits, []);
+    assert.deepEqual(h.consoleErrors, []);
+  } finally { await h.close(); }
+});
+
+test('"לא לקנות כאן": a product dropped at one chain only; a re-fill takes back what was added there', async () => {
+  const state = simpleState();
+  const h = await launch({ state });
+  try {
+    await toConnect(h);
+    await runList(h);
+    // line 1 = bread: not at Rami Levy
+    await tid(h.app, 'exclude-1-ramilevy').check();
+    assert.match(await text(h, 'cell-1-ramilevy'), /הוסר על ידך/);
+    assert.equal(money(await text(h, 'total-ramilevy')), 14); // review estimate: 2 milks only
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, { 1001: '2.00' });
+    assert.deepEqual(state.hazihinam.cart, { 2001: 2, 2002: 1 });
+    assert.deepEqual(state.shufersal.cart.map((l) => [l.code, Number(l.qty)]).sort(), [['P_7290000000012', 2], ['P_7290000000029', 1]]);
+    const body = await h.app.innerText('body');
+    assert.ok(body.includes('הוסר על ידך'), 'the result shows the user removed it');
+    assert.equal(money(await text(h, 'total-ramilevy')), 14);
+
+    // back: re-include bread at Rami Levy, drop milk at Shufersal, fill again
+    await tid(h.app, 'btn-back').click();
+    await tid(h.app, 'btn-fill').waitFor();
+    await tid(h.app, 'exclude-1-ramilevy').uncheck();
+    await tid(h.app, 'exclude-0-shufersal').check();
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, { 1001: '2.00', 1002: '1.00' });
+    assert.deepEqual(state.shufersal.cart.map((l) => [l.code, Number(l.qty)]).sort(), [['P_7290000000029', 1]]);
+    assert.deepEqual(state.hazihinam.cart, { 2001: 2, 2002: 1 });
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally { await h.close(); }
+});
+
+test('re-fill with profile policy "empty": the cart is never emptied silently; the choice shows the current cart', async () => {
+  const state = simpleState(); // every cart starts empty, so the first fill asks nothing
+  const h = await launch({ state });
+  try {
+    await h.sw.evaluate(() => chrome.storage.local.set({ profile: {
+      address: { city: 'חיפה', street: 'הנשיא', number: '1' }, deliveryOverrides: {}, existingCartPolicy: 'empty', discounts: [],
+    } }));
+    await h.app.reload();
+    if (await tid(h.app, 'btn-save-settings').count()) await tid(h.app, 'btn-save-settings').click();
+    await tid(h.app, 'btn-continue').waitFor({ timeout: 60000 });
+    await settled(h.app);
+    await runList(h);
+    assert.equal(await tid(h.app, 'policy-ramilevy-empty').count(), 0, 'empty cart: nothing to ask');
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, { 1001: '2.00', 1002: '1.00' });
+    state.ramilevy.cart[1003] = '1.00'; // the user adds a shampoo on the site meanwhile
+
+    await tid(h.app, 'btn-back').click();
+    await tid(h.app, 'btn-fill').waitFor();
+    assert.match(await text(h, 'policy-ramilevy'), /2 מוצרים בעגלה/, 'the count is the cart after our fill');
+    assert.equal(await tid(h.app, 'policy-ramilevy-keep').isChecked(), true, 're-fill defaults to keep');
+    await fill(h);
+    assert.deepEqual(state.ramilevy.cart, { 1001: '2.00', 1002: '1.00', 1003: '1.00' }, 'nothing emptied, nothing doubled');
+    assert.deepEqual(h.consoleErrors, []);
+  } finally { await h.close(); }
+});
+
+test('an item the site reports unavailable in the cart is flagged and left out of the comparison', async () => {
+  const state = simpleState();
+  const h = await launch({ state });
+  try {
+    await toConnect(h);
+    await runList(h);
+    // between the search and the fill the bread ran out (Rami Levy: store 331 dropped; Hatzi Hinam: IsInStock false)
+    state.ramilevy.catalog.find((c) => c.id === 1002).available_in = [82];
+    state.hazihinam.catalog.find((c) => c.Id === 2002).IsInStock = false;
+    await fill(h);
+    for (const c of ['ramilevy', 'hazihinam']) {
+      const w = await text(h, `unavailable-${c}`);
+      assert.match(w, /מוצרים שאזלו באתר — הסירו אותם מהעגלה באתר או החליפו/);
+      assert.match(w, /לחם אחיד פרוס/);
+      const card = await h.app.locator(`[data-testid="chain-card-${c}"]`).innerText();
+      assert.ok(card.includes('ייתכן שהסכום באתר כולל מוצרים שאזלו'));
+    }
+    assert.equal(await tid(h.app, 'unavailable-shufersal').count(), 0);
+    // like the real site, Rami Levy prices only what its store can supply: 2 milk = 14, the bread is left out
+    assert.equal(money(await text(h, 'total-ramilevy')), 14, 'the total is the site own total');
+    assert.ok((await h.app.innerText('body')).includes('אזל במלאי באתר'));
+    assert.deepEqual(state.forbiddenHits, []);
+  } finally { await h.close(); }
+});

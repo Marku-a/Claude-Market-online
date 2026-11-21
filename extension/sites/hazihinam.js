@@ -94,12 +94,14 @@ export function parseCartLines(itemsJson) {
     const qty = it && it.Cart ? num(it.Cart.Quantity) : null;
     if (!it || it.Id == null || qty === null) throw new AdapterError('SHAPE_CHANGED', 'missing field: Cart.Quantity');
     const price = num(it.Price_NET) ?? 0;
-    return {
+    const line = {
       id: String(it.Id),
       name: String(it.Name ?? ''),
       qty,
       lineTotal: num(it.Calculated_Price_NET) ?? Math.round(price * qty * 100) / 100,
     };
+    if (it.IsInStock === false) line.available = false; // the site itself says this line cannot be supplied
+    return line;
   });
 }
 

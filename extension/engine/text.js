@@ -52,6 +52,14 @@ export function productKey(p) {
 export function queryNumbers(query) {
   return normalize(query).split(' ').filter((t) => /[0-9]/.test(t));
 }
+// True when every word the user wrote (not numbers / one-letter sizes) appears in the product name. A word counts
+// when its stem (all but the last two letters, min 3) appears anywhere in the name: "ביצים" ~ "ביצי חופש".
+export function coversQueryWords(query, name) {
+  const n = normalize(name);
+  return normalize(query).split(' ')
+    .filter((t) => t.length > 1 && !/[0-9]/.test(t))
+    .every((t) => n.includes(t.slice(0, Math.max(3, t.length - 2))));
+}
 export function hasAllNumbers(name, nums) {
   const tokens = new Set(normalize(name).split(' '));
   return nums.every((n) => tokens.has(n));
