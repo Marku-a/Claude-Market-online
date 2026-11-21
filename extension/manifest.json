@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "סל חכם — השוואת סל בין רשתות",
   "short_name": "סל חכם",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "בונה את סל הקניות שלך בחצי חינם, רמי לוי ושופרסל, משווה מחירים מהאתרים עצמם ומשאיר עגלה מוכנה. לא משלם ולא רואה פרטי אשראי.",
   "default_locale": "he",
   "permissions": ["storage", "tabs", "scripting"],

@@ -29,19 +29,21 @@
 
 ## התקנה
 
-המדריך המלא, צעד-אחר-צעד ובעברית פשוטה: **[docs/INSTALL.md](docs/INSTALL.md)**. בקצרה (Windows + Google Chrome):
+המדריך המלא, צעד-אחר-צעד ובעברית פשוטה: **[docs/INSTALL.md](docs/INSTALL.md)**. בקצרה (Windows + Google Chrome, גרסה 0.2.0):
 
-1. ב-[דף הפרויקט ב-GitHub](https://github.com/Marku-a/Claude-Market-online) לחצו על הכפתור הירוק **Code** ← **Download ZIP**.
-2. בתיקייה "הורדות" (Downloads): קליק ימני על הקובץ ← **חלץ הכל…** (Extract All…) ← בחרו מקום **קבוע**, למשל "מסמכים".
-   כרום טוען את התוסף מהתיקייה הזאת, ולכן מחיקה או העברה שלה תשבור אותו.
-3. ב-Chrome הקלידו בשורת הכתובת `chrome://extensions`, והפעילו את **מצב מפתח** (Developer mode) למעלה מימין.
-4. לחצו **טען פריט לא ארוז** (Load unpacked) ובחרו את התיקייה `extension` **שבתוך** התיקייה שחולצה
-   (`Claude-Market-online-main\extension`). בחירת התיקייה החיצונית תיתן את השגיאה "Manifest file is missing or unreadable".
-5. לחצו על סמל הפאזל 🧩 ו**נעצו** את "סל חכם" לסרגל.
-6. התחברו בלשוניות רגילות לשלושת האתרים (ודאו שמוגדרת כתובת משלוח בכל אחד), פתחו את התוסף ופעלו לפי השלבים.
+1. הורידו את **[מתקין סל חכם (SalHacham-Setup.cmd)](https://github.com/Marku-a/Claude-Market-online/releases/latest/download/SalHacham-Setup.cmd)**.
+   אם כרום או Windows מזהירים שהקובץ "לא נפוץ", בחרו **שמור** ואחר כך **מידע נוסף** ← **הפעל בכל זאת**. זה צפוי, והקובץ פתוח לקריאה ובטוח (פרטים במדריך).
+2. הריצו אותו בלחיצה כפולה. חלון שחור קצר ייפתח, וזה תקין. המתקין מוריד את הגרסה העדכנית מ-GitHub, שם אותה בתיקייה
+   קבועה (`%LOCALAPPDATA%\SalHacham\extension`), מעתיק את הנתיב שלה ללוח, ופותח את כרום עם דף הוראות בעברית.
+3. בכרום, בדף `chrome://extensions`, שלוש לחיצות (בפעם הראשונה בלבד, כי כרום לא מאפשר להתקין תוסף מחוץ לחנות באופן אוטומטי):
+   הפעילו **מצב מפתח** (Developer mode) ← **טען פריט לא ארוז** (Load unpacked) ← הדביקו (Ctrl+V) את הנתיב בשורת הכתובת של החלון,
+   Enter, ו**בחר תיקייה** (Select Folder).
+4. לחצו על סמל הפאזל 🧩 ו**נעצו** את "סל חכם" לסרגל.
+5. התחברו בלשוניות רגילות לשלושת האתרים (ודאו שמוגדרת כתובת משלוח בכל אחד), פתחו את התוסף ופעלו לפי השלבים.
    התשלום תמיד על ידכם באתר.
 
-עדכון לגרסה חדשה, פתרון בעיות ופרטים נוספים: [docs/INSTALL.md](docs/INSTALL.md).
+עדכון: מריצים שוב את `SalHacham-Setup.cmd` ולוחצים ↻ על סל חכם. הסרה: [SalHacham-Uninstall.cmd](https://github.com/Marku-a/Claude-Market-online/releases/latest/download/SalHacham-Uninstall.cmd).
+ב-Mac/Linux, או אם המתקין לא עובד, יש התקנה ידנית: [docs/INSTALL.md](docs/INSTALL.md).
 
 ## אבטחה
 ראו **[docs/SECURITY.md](docs/SECURITY.md)**. בקצרה:
