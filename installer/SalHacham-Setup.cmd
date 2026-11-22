@@ -137,15 +137,16 @@ button:hover{background:#B85A45}
 <span class="lbl">מצב מפתח</span> / <span class="lbl en">Developer mode</span>. לוחצים עליו כך שיידלק.</p>
 </div></div>
 <div class="card step"><div class="num">2</div><div>
-<h2>לוחצים על &quot;טען פריט לא ארוז&quot;</h2>
-<p>אחרי שהמתג נדלק מופיעה שורת כפתורים. לוחצים על
-<span class="lbl">טען פריט לא ארוז</span> / <span class="lbl en">Load unpacked</span>.</p>
+<h2>הנתיב של התיקייה</h2>
+<p>זה הנתיב שתדביקו בשלב הבא. הוא כבר הועתק בשבילכם, ואם צריך אפשר להעתיק אותו שוב בכפתור <span class="lbl">העתק</span>:</p>
+$copyBlock
 </div></div>
 <div class="card step"><div class="num">3</div><div>
-<h2>מדביקים את הנתיב ובוחרים תיקייה</h2>
-<p>בחלון בחירת התיקייה, לוחצים על שורת הכתובת למעלה, מדביקים (Ctrl+V) את הנתיב הזה ולוחצים Enter:</p>
-$copyBlock
-<p>ואז לוחצים <span class="lbl">בחר תיקייה</span> / <span class="lbl en">Select Folder</span>.</p>
+<h2>לוחצים על &quot;טען פריט לא ארוז&quot; ומדביקים</h2>
+<p>אחרי שהמתג נדלק מופיעה שורת כפתורים. לוחצים על
+<span class="lbl">טען פריט לא ארוז</span> / <span class="lbl en">Load unpacked</span>.
+בחלון בחירת התיקייה שנפתח, לוחצים על שורת הכתובת למעלה, מדביקים (Ctrl+V) את הנתיב ולוחצים Enter,
+ואז לוחצים <span class="lbl">בחר תיקייה</span> / <span class="lbl en">Select Folder</span>.</p>
 </div></div>
 <div class="card step"><div class="num">&#10003;</div><div>
 <h2>מצמידים לסרגל</h2>
