@@ -149,7 +149,7 @@ $copyBlock
 </div></div>
 <div class="card step"><div class="num">&#10003;</div><div>
 <h2>מצמידים לסרגל</h2>
-<p>לוחצים על סמל <b>חלק הפאזל</b> &#129513; ליד שורת הכתובת, ומצמידים (&#128204;) את <b>סל חכם</b> כדי שיהיה תמיד בהישג יד.</p>
+<p>לוחצים על סמל <b>חלק הפאזל</b> &#129513; (<span class="en">Extensions</span>) ליד שורת הכתובת, ומצמידים &#128204; (<span class="en">Pin</span>) את <b>סל חכם</b> כדי שיהיה תמיד בהישג יד.</p>
 </div></div>
 "@
     } else {
@@ -158,7 +158,7 @@ $copyBlock
         $body = @"
 <div class="card step"><div class="num">1</div><div>
 <h2>לוחצים על &quot;טען מחדש&quot; &#8635;</h2>
-<p class="big">בלשונית <span class="en">chrome://extensions</span> שנפתחה, מוצאים את הכרטיס של <b>סל חכם</b> ולוחצים על חץ הטעינה מחדש <b>&#8635;</b>. זהו!</p>
+<p class="big">בלשונית <span class="en">chrome://extensions</span> שנפתחה, מוצאים את הכרטיס של <b>סל חכם</b> ולוחצים על חץ הטעינה מחדש <b>&#8635;</b> (<span class="en">Reload</span>). זהו!</p>
 <p>לא רואים את סל חכם ברשימה? מתקינים כמו בפעם הראשונה: מדליקים <span class="lbl">מצב מפתח</span> / <span class="lbl en">Developer mode</span>,
 לוחצים <span class="lbl">טען פריט לא ארוז</span> / <span class="lbl en">Load unpacked</span>, מדביקים את הנתיב ולוחצים <span class="lbl">בחר תיקייה</span> / <span class="lbl en">Select Folder</span>:</p>
 $copyBlock
